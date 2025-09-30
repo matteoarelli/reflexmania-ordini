@@ -393,13 +393,16 @@ def generate_packlink_csv_endpoint():
         
         all_orders = []
         
-        # BackMarket
+        # BackMarket - prendi ordini da accettare, accettati e da spedire
         logger.info("Recupero ordini BackMarket...")
         bm_client = BackMarketClient(BACKMARKET_TOKEN)
-        bm_orders = bm_client.get_orders(status='to_ship')
-        for order in bm_orders:
-            all_orders.append(normalize_order(order, 'backmarket'))
-        logger.info(f"BackMarket: {len(bm_orders)} ordini")
+        
+        # Prova diversi status
+        for status in ['waiting_acceptance', 'accepted', 'to_ship']:
+            orders = bm_client.get_orders(status=status)
+            for order in orders:
+                all_orders.append(normalize_order(order, 'backmarket'))
+            logger.info(f"BackMarket ({status}): {len(orders)} ordini")
         
         # Refurbed
         logger.info("Recupero ordini Refurbed...")
@@ -453,8 +456,10 @@ def generate_ddt_endpoint():
         rf_client = RefurbishedClient(REFURBED_TOKEN)
         oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)
         
-        for order in bm_client.get_orders(status='to_ship'):
-            all_orders.append(normalize_order(order, 'backmarket'))
+        # BackMarket - prendi ordini in diversi stati
+        for status in ['waiting_acceptance', 'accepted', 'to_ship']:
+            for order in bm_client.get_orders(status=status):
+                all_orders.append(normalize_order(order, 'backmarket'))
         
         for order in rf_client.get_orders():
             all_orders.append(normalize_order(order, 'refurbed'))

@@ -496,6 +496,39 @@ def health():
     """Health check endpoint"""
     return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
 
+@app.route('/debug_orders', methods=['GET'])
+def debug_orders():
+    """Debug: mostra struttura ordini grezzi dalle API"""
+    try:
+        result = {
+            'backmarket': [],
+            'refurbed': [],
+            'cdiscount': []
+        }
+        
+        # BackMarket
+        bm_client = BackMarketClient(BACKMARKET_TOKEN)
+        bm_orders = bm_client.get_orders(status='accepted', limit=1)
+        if bm_orders:
+            result['backmarket'] = bm_orders[0]  # Solo il primo ordine
+        
+        # Refurbed
+        rf_client = RefurbishedClient(REFURBED_TOKEN)
+        rf_orders = rf_client.get_orders(limit=1)
+        if rf_orders:
+            result['refurbed'] = rf_orders[0]
+        
+        # CDiscount
+        oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)
+        oct_orders = oct_client.get_orders(limit=1)
+        if oct_orders:
+            result['cdiscount'] = oct_orders[0]
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port)

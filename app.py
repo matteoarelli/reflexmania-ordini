@@ -164,53 +164,78 @@ def normalize_order(order: Dict, source: str) -> Dict:
     """Normalizza ordini da diversi marketplace in formato comune"""
     
     if source == 'backmarket':
+        shipping = order.get('shipping_address', {})
+        items = []
+        for item in order.get('orderlines', []):
+            items.append({
+                'sku': item.get('serial_number', item.get('listing', '')),
+                'name': item.get('product', 'N/A'),
+                'quantity': item.get('quantity', 1)
+            })
+        
         return {
             'order_id': order.get('order_id'),
             'source': 'BackMarket',
-            'customer_name': f"{order.get('shipping_address', {}).get('first_name', '')} {order.get('shipping_address', {}).get('last_name', '')}",
-            'customer_email': order.get('customer_email', ''),
-            'customer_phone': order.get('shipping_address', {}).get('phone', ''),
-            'address': order.get('shipping_address', {}).get('street', ''),
-            'city': order.get('shipping_address', {}).get('city', ''),
-            'postal_code': order.get('shipping_address', {}).get('postal_code', ''),
-            'country': order.get('shipping_address', {}).get('country', ''),
-            'items': [{'sku': item.get('sku'), 'name': item.get('name'), 'quantity': item.get('quantity')} 
-                     for item in order.get('items', [])],
-            'total': order.get('total_price', 0)
+            'customer_name': f"{shipping.get('first_name', '')} {shipping.get('last_name', '')}".strip(),
+            'customer_email': shipping.get('email', ''),
+            'customer_phone': shipping.get('phone', ''),
+            'address': f"{shipping.get('street', '')} {shipping.get('street2', '')}".strip(),
+            'city': shipping.get('city', ''),
+            'postal_code': shipping.get('postal_code', ''),
+            'country': shipping.get('country', ''),
+            'items': items,
+            'total': float(order.get('price', 0))
         }
     
     elif source == 'refurbed':
         shipping = order.get('shipping_address', {})
+        items = []
+        for item in order.get('items', []):
+            items.append({
+                'sku': item.get('sku', item.get('item_identifier', '')),
+                'name': item.get('name', 'N/A'),
+                'quantity': 1
+            })
+        
         return {
             'order_id': order.get('id'),
             'source': 'Refurbed',
-            'customer_name': f"{shipping.get('first_name', '')} {shipping.get('last_name', '')}",
+            'customer_name': f"{shipping.get('first_name', '')} {shipping.get('family_name', '')}".strip(),
             'customer_email': order.get('customer_email', ''),
-            'customer_phone': shipping.get('phone', ''),
-            'address': shipping.get('street', ''),
-            'city': shipping.get('city', ''),
-            'postal_code': shipping.get('postal_code', ''),
+            'customer_phone': shipping.get('phone_number', ''),
+            'address': f"{shipping.get('street_name', '')} {shipping.get('house_no', '')}".strip(),
+            'city': shipping.get('town', ''),
+            'postal_code': shipping.get('post_code', ''),
             'country': shipping.get('country_code', ''),
-            'items': [{'sku': item.get('sku'), 'name': item.get('name'), 'quantity': 1} 
-                     for item in order.get('line_items', [])],
-            'total': order.get('total_price', {}).get('amount', 0)
+            'items': items,
+            'total': float(order.get('total_paid', 0))
         }
     
     elif source == 'octopia':
-        shipping = order.get('ShippingAddress', {})
+        items = []
+        shipping = {}
+        
+        for line in order.get('lines', []):
+            shipping = line.get('shippingAddress', {})
+            offer = line.get('offer', {})
+            items.append({
+                'sku': offer.get('sellerProductId', ''),
+                'name': offer.get('productTitle', 'N/A'),
+                'quantity': line.get('quantity', 1)
+            })
+        
         return {
-            'order_id': order.get('OrderId'),
+            'order_id': order.get('orderId'),
             'source': 'CDiscount',
-            'customer_name': f"{shipping.get('FirstName', '')} {shipping.get('LastName', '')}",
-            'customer_email': order.get('CustomerEmail', ''),
-            'customer_phone': shipping.get('Phone', ''),
-            'address': shipping.get('Address', ''),
-            'city': shipping.get('City', ''),
-            'postal_code': shipping.get('ZipCode', ''),
-            'country': shipping.get('Country', ''),
-            'items': [{'sku': item.get('SellerProductId'), 'name': item.get('ProductName'), 'quantity': item.get('Quantity')} 
-                     for item in order.get('OrderLines', [])],
-            'total': order.get('TotalPrice', 0)
+            'customer_name': f"{shipping.get('firstName', '')} {shipping.get('lastName', '')}".strip(),
+            'customer_email': shipping.get('email', ''),
+            'customer_phone': shipping.get('phone', ''),
+            'address': shipping.get('addressLine1', ''),
+            'city': shipping.get('city', ''),
+            'postal_code': shipping.get('postalCode', ''),
+            'country': shipping.get('countryCode', ''),
+            'items': items,
+            'total': float(order.get('totalPrice', {}).get('sellingPrice', 0))
         }
     
     return {}

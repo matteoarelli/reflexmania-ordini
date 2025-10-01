@@ -260,8 +260,10 @@ def normalize_order(order: Dict, source: str) -> Dict:
         shipping = order.get('shipping_address', {})
         items = []
         for item in order.get('orderlines', []):
+            # BackMarket usa 'listing' come SKU e 'serial_number' come seriale
+            sku = item.get('serial_number') or item.get('listing', '')
             items.append({
-                'sku': item.get('serial_number', item.get('listing', '')),
+                'sku': sku,
                 'name': item.get('product', 'N/A'),
                 'quantity': item.get('quantity', 1)
             })

@@ -766,20 +766,26 @@ def dashboard():
                             `;
                             statusBadge = '<span class="badge badge-pending">Da Accettare</span>';
                         } else if (stateNum === 2 || order.status === 'accepted') {
-                            // Ordine già accettato - packing slip + DDT
+                            // Ordine già accettato - packing slip + DDT + Spedizione
                             actionButtons = `
                                 ${packingSlipBtn}
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
                                     📋 Crea DDT
+                                </button>
+                                <button class="btn btn-primary btn-small" onclick="markAsShipped('${order.order_id}', '${order.source}')" style="background: #17a2b8;">
+                                    📦 Spedito
                                 </button>
                             `;
                             statusBadge = '<span class="badge badge-accepted">Accettato</span>';
                         } else if (stateNum === 3 || order.status === 'to_ship') {
-                            // Pronto per spedizione - packing slip + DDT
+                            // Pronto per spedizione - packing slip + DDT + Spedizione
                             actionButtons = `
                                 ${packingSlipBtn}
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
                                     📋 Crea DDT
+                                </button>
+                                <button class="btn btn-primary btn-small" onclick="markAsShipped('${order.order_id}', '${order.source}')" style="background: #17a2b8;">
+                                    📦 Spedito
                                 </button>
                             `;
                             statusBadge = '<span class="badge badge-accepted">Da Spedire</span>';
@@ -819,6 +825,49 @@ def dashboard():
                         </tr>
                     `;
                 }).join('');
+            }
+            
+            function markAsShipped(orderId, source) {
+                const trackingNumber = prompt(`Inserisci il numero di tracking per l'ordine ${orderId}:`);
+                
+                if (!trackingNumber || trackingNumber.trim() === '') {
+                    alert('Numero di tracking obbligatorio');
+                    return;
+                }
+                
+                const trackingUrl = prompt(`Inserisci l'URL di tracking (opzionale):`);
+                
+                if (!confirm(`Confermi la spedizione dell'ordine ${orderId}?\n\nTracking: ${trackingNumber}`)) {
+                    return;
+                }
+                
+                document.getElementById('loading').style.display = 'block';
+                
+                fetch('/api/mark_shipped', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        order_id: orderId, 
+                        source: source,
+                        tracking_number: trackingNumber,
+                        tracking_url: trackingUrl || ''
+                    })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        alert(`✅ Ordine ${orderId} marcato come spedito!\n\nTracking comunicato al marketplace.`);
+                        refreshOrders();
+                    } else {
+                        alert('❌ Errore: ' + data.error);
+                        document.getElementById('loading').style.display = 'none';
+                    }
+                })
+                .catch(err => {
+                    alert('❌ Errore di connessione');
+                    console.error(err);
+                    document.getElementById('loading').style.display = 'none';
+                });
             }
             
             function acceptOrderOnly(orderId, source) {
@@ -933,6 +982,69 @@ def api_orders():
     except Exception as e:
         logger.error(f"Errore API orders: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/mark_shipped', methods=['POST'])
+def api_mark_shipped():
+    """API: marca ordine come spedito e comunica tracking al marketplace"""
+    try:
+        data = request.json
+        order_id = data.get('order_id')
+        source = data.get('source')
+        tracking_number = data.get('tracking_number')
+        tracking_url = data.get('tracking_url', '')
+        
+        if not tracking_number:
+            return jsonify({'success': False, 'error': 'Tracking number obbligatorio'}), 400
+        
+        # BackMarket: aggiorna ordine a stato 3 (Shipped)
+        if source == 'BackMarket':
+            bm_client = BackMarketClient(BACKMARKET_TOKEN)
+            
+            # Prima recupera i dettagli dell'ordine per ottenere gli SKU
+            order_url = f"{bm_client.base_url}/ws/orders/{order_id}"
+            order_response = requests.get(order_url, headers=bm_client.headers)
+            
+            if order_response.status_code != 200:
+                return jsonify({'success': False, 'error': 'Impossibile recuperare ordine'}), 500
+            
+            order_data = order_response.json()
+            orderlines = order_data.get('orderlines', [])
+            
+            if not orderlines:
+                return jsonify({'success': False, 'error': 'Nessuna orderline trovata'}), 500
+            
+            # Aggiorna la prima orderline con tracking (BackMarket applicherà a tutte)
+            sku = orderlines[0].get('listing') or orderlines[0].get('serial_number')
+            
+            update_url = f"{bm_client.base_url}/ws/orders/{order_id}"
+            update_data = {
+                "order_id": int(order_id),
+                "new_state": 3,  # Shipped
+                "sku": sku,
+                "tracking_number": tracking_number,
+                "tracking_url": tracking_url
+            }
+            
+            response = requests.post(update_url, headers=bm_client.headers, json=update_data)
+            
+            if response.status_code != 200:
+                logger.error(f"Errore BackMarket mark shipped: {response.status_code} - {response.text}")
+                return jsonify({'success': False, 'error': f'Errore API BackMarket: {response.text}'}), 500
+            
+            logger.info(f"Ordine {order_id} marcato come spedito su BackMarket")
+        
+        # TODO: Implementare per Refurbed e CDiscount
+        
+        return jsonify({
+            'success': True,
+            'order_id': order_id,
+            'tracking_number': tracking_number,
+            'message': 'Ordine marcato come spedito'
+        })
+        
+    except Exception as e:
+        logger.error(f"Errore mark_shipped: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/accept_order_only', methods=['POST'])
 def api_accept_order_only():

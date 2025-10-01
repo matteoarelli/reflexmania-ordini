@@ -35,7 +35,7 @@ BACKMARKET_BASE_URL = "https://www.backmarket.fr"
 
 # Refurbed
 REFURBED_TOKEN = os.getenv('REFURBED_TOKEN', '277931ea-1ede-4a14-8aaa-41b2222d2aba')
-REFURBED_BASE_URL = "https://api.refurbed.com"
+REFURBED_BASE_URL = "https://merchant.refurbed.com/api/v1"
 
 # CDiscount (Octopia)
 OCTOPIA_CLIENT_ID = os.getenv('OCTOPIA_CLIENT_ID', 'reflexmania')
@@ -50,7 +50,7 @@ INVOICEX_CONFIG = {
     'database': os.getenv('INVOICEX_DB', 'ilblogdi_invoicex2021'),
 }
 
-# ==================== CLIENT API (stessi di prima) ====================
+# ==================== CLIENT API ====================
 
 class BackMarketClient:
     def __init__(self, token: str):
@@ -145,42 +145,65 @@ class BackMarketClient:
             logger.error(f"Errore disabilitazione listing BackMarket: {e}")
             return False
 
+
 class RefurbishedClient:
     def __init__(self, token: str):
         self.token = token
         self.base_url = REFURBED_BASE_URL
         self.headers = {
-            'Authorization': f'Plain {token}',
-            'Content-Type': 'application/json'
+            'Authorization': f'Bearer {token}',  # Bearer, non Plain
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
         }
     
-    def get_orders(self, limit: int = 100) -> List[Dict]:
+    def get_orders(self, state: str = None, limit: int = 100) -> List[Dict]:
+        """Recupera ordini da Refurbed - API REST standard"""
         try:
-            url = f"{self.base_url}/refb.merchant.v1.OrderService/ListOrders"
-            data = {"pagination": {"limit": limit}}
-            response = requests.post(url, headers=self.headers, json=data)
+            url = f"{self.base_url}/orders"
+            params = {'limit': limit}
+            
+            # Filtra per stato se specificato (NEW, SHIPPED, DELIVERED, CANCELLED)
+            if state:
+                params['state'] = state
+            
+            response = requests.get(url, headers=self.headers, params=params)
             response.raise_for_status()
-            result = response.json()
-            return result.get('orders', [])
+            
+            data = response.json()
+            # Refurbed ritorna {data: [...], meta: {...}}
+            orders = data.get('data', [])
+            
+            logger.info(f"Refurbed: recuperati {len(orders)} ordini (stato: {state or 'tutti'})")
+            return orders
+            
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"Errore HTTP Refurbed: {e.response.status_code}")
+            if hasattr(e.response, 'text'):
+                logger.error(f"Response body: {e.response.text}")
+            return []
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Errore connessione Refurbed: {e}")
+            return []
         except Exception as e:
-            logger.error(f"Errore Refurbed get_orders: {e}")
+            logger.error(f"Errore imprevisto Refurbed: {e}")
             return []
     
     def disable_offer(self, sku: str) -> bool:
-        """Disabilita un'offerta (imposta stock a 0)"""
+        """Disabilita offerta (stock = 0)"""
         try:
-            url = f"{self.base_url}/refb.merchant.v1.OfferService/UpdateOffer"
-            data = {
-                "identifier": {"sku": sku},
-                "stock": 0
-            }
-            response = requests.post(url, headers=self.headers, json=data)
+            url = f"{self.base_url}/offers/{sku}"
+            data = {'stock': 0}
+            
+            response = requests.patch(url, headers=self.headers, json=data)
             response.raise_for_status()
+            
             logger.info(f"Offerta Refurbed SKU {sku} disabilitata")
             return True
+            
         except Exception as e:
-            logger.error(f"Errore disabilitazione offerta Refurbed: {e}")
+            logger.error(f"Errore disabilitazione Refurbed: {e}")
             return False
+
 
 class OctopiaClient:
     def __init__(self, client_id: str, client_secret: str, seller_id: str):
@@ -236,8 +259,6 @@ class OctopiaClient:
                 'Content-Type': 'application/json'
             }
             
-            # Octopia usa il meccanismo di package XML per aggiornare stock
-            # Per semplicità usiamo l'API diretta se disponibile
             url = f"{self.base_url}/offers/{seller_product_id}"
             data = {'stock': 0}
             
@@ -246,10 +267,9 @@ class OctopiaClient:
             logger.info(f"Offerta CDiscount {seller_product_id} disabilitata")
             return True
         except Exception as e:
-            # Fallback: logga solo se l'API non è disponibile
             logger.warning(f"Impossibile disabilitare offerta CDiscount via API: {e}")
             logger.info(f"Disabilitazione CDiscount {seller_product_id} richiede package XML manuale")
-            return True  # Ritorna True per non bloccare il workflow
+            return True
 
 # ==================== FUNZIONI HELPER ====================
 
@@ -260,7 +280,6 @@ def normalize_order(order: Dict, source: str) -> Dict:
         shipping = order.get('shipping_address', {})
         items = []
         for item in order.get('orderlines', []):
-            # BackMarket usa 'listing' come SKU e 'serial_number' come seriale
             sku = item.get('serial_number') or item.get('listing', '')
             items.append({
                 'sku': sku,
@@ -282,34 +301,38 @@ def normalize_order(order: Dict, source: str) -> Dict:
             'country': shipping.get('country', ''),
             'items': items,
             'total': float(order.get('price', 0)),
-            'delivery_note': order.get('delivery_note', ''),  # URL packing slip
+            'delivery_note': order.get('delivery_note', ''),
             'accepted': False
         }
     
     elif source == 'refurbed':
         shipping = order.get('shipping_address', {})
         items = []
-        for item in order.get('items', []):
+        
+        # Refurbed può avere "line_items" o "items"
+        order_items = order.get('line_items', order.get('items', []))
+        
+        for item in order_items:
             items.append({
-                'sku': item.get('sku', item.get('item_identifier', '')),
-                'name': item.get('name', 'N/A'),
-                'quantity': 1
+                'sku': item.get('sku', item.get('offer_id', item.get('item_identifier', ''))),
+                'name': item.get('title', item.get('name', 'N/A')),
+                'quantity': item.get('quantity', 1)
             })
         
         return {
-            'order_id': str(order.get('id')),
+            'order_id': str(order.get('id', order.get('order_id', ''))),
             'source': 'Refurbed',
-            'status': order.get('state', 'unknown'),
-            'date': order.get('released_at', ''),
-            'customer_name': f"{shipping.get('first_name', '')} {shipping.get('family_name', '')}".strip(),
-            'customer_email': order.get('customer_email', ''),
-            'customer_phone': shipping.get('phone_number', ''),
-            'address': f"{shipping.get('street_name', '')} {shipping.get('house_no', '')}".strip(),
-            'city': shipping.get('town', ''),
-            'postal_code': shipping.get('post_code', ''),
-            'country': shipping.get('country_code', ''),
+            'status': order.get('state', 'NEW'),
+            'date': order.get('created_at', order.get('released_at', '')),
+            'customer_name': f"{shipping.get('first_name', '')} {shipping.get('last_name', shipping.get('family_name', ''))}".strip(),
+            'customer_email': order.get('email', order.get('customer_email', '')),
+            'customer_phone': shipping.get('phone', shipping.get('phone_number', '')),
+            'address': f"{shipping.get('street', shipping.get('street_name', ''))} {shipping.get('house_number', shipping.get('house_no', ''))}".strip(),
+            'city': shipping.get('city', shipping.get('town', '')),
+            'postal_code': shipping.get('zip', shipping.get('post_code', '')),
+            'country': shipping.get('country', shipping.get('country_code', '')),
             'items': items,
-            'total': float(order.get('total_paid', 0)),
+            'total': float(order.get('total', order.get('total_paid', 0))),
             'accepted': False
         }
     
@@ -345,24 +368,22 @@ def normalize_order(order: Dict, source: str) -> Dict:
     
     return {}
 
+
 def get_pending_orders() -> List[Dict]:
     """Recupera tutti gli ordini pendenti da tutti i canali"""
     all_orders = []
-    seen_order_ids = set()  # Per deduplicare ordini BackMarket
+    seen_order_ids = set()
     
     # BackMarket - tutti gli ordini non ancora spediti
     bm_client = BackMarketClient(BACKMARKET_TOKEN)
     bm_count = 0
     
-    # Tutti gli stati che indicano "non ancora spedito"
     for status in ['waiting_acceptance', 'accepted', 'to_ship']:
         orders = bm_client.get_orders(status=status)
         for order in orders:
-            # Filtra solo ordini NON già spediti (state != 9)
             order_state = order.get('state', 0)
             order_id = str(order.get('order_id'))
             
-            # Deduplica: salta se già visto questo order_id
             if order_id in seen_order_ids:
                 continue
             
@@ -378,17 +399,20 @@ def get_pending_orders() -> List[Dict]:
     rf_client = RefurbishedClient(REFURBED_TOKEN)
     rf_orders = rf_client.get_orders()
     rf_count = 0
+    
     for order in rf_orders:
-        if order.get('state') not in ['SHIPPED', 'DELIVERED', 'CANCELLED']:
+        order_state = order.get('state', 'NEW')
+        if order_state not in ['SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED']:
             all_orders.append(normalize_order(order, 'refurbed'))
             rf_count += 1
     
-    logger.info(f"Refurbed: {rf_count} ordini da processare")
+    logger.info(f"Refurbed: {rf_count} ordini da processare su {len(rf_orders)} totali")
     
     # CDiscount - solo ordini non ancora spediti
     oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)
     oct_orders = oct_client.get_orders()
     cd_count = 0
+    
     for order in oct_orders:
         if order.get('status') not in ['Shipped', 'Delivered', 'Cancelled']:
             all_orders.append(normalize_order(order, 'octopia'))
@@ -397,6 +421,7 @@ def get_pending_orders() -> List[Dict]:
     logger.info(f"CDiscount: {cd_count} ordini da processare")
     
     return all_orders
+
 
 def disable_product_on_channels(sku: str, source: str) -> Dict:
     """Disabilita un prodotto su tutti i canali impostando stock a 0"""
@@ -408,13 +433,10 @@ def disable_product_on_channels(sku: str, source: str) -> Dict:
     
     logger.info(f"Disabilitazione prodotto SKU {sku} su tutti i canali")
     
-    # BackMarket - Disabilita listing
+    # BackMarket
     try:
         bm_client = BackMarketClient(BACKMARKET_TOKEN)
         results['backmarket']['attempted'] = True
-        
-        # Il listing ID su BackMarket è spesso il SKU stesso o il serial number
-        # Potrebbe richiedere una ricerca preventiva del listing
         success = bm_client.disable_listing(sku)
         results['backmarket']['success'] = success
         results['backmarket']['message'] = 'Disabilitato' if success else 'Errore disabilitazione'
@@ -422,11 +444,10 @@ def disable_product_on_channels(sku: str, source: str) -> Dict:
         results['backmarket']['message'] = f'Errore: {str(e)}'
         logger.error(f"Errore disabilitazione BackMarket: {e}")
     
-    # Refurbed - Disabilita offerta
+    # Refurbed
     try:
         rf_client = RefurbishedClient(REFURBED_TOKEN)
         results['refurbed']['attempted'] = True
-        
         success = rf_client.disable_offer(sku)
         results['refurbed']['success'] = success
         results['refurbed']['message'] = 'Disabilitato' if success else 'Errore disabilitazione'
@@ -434,11 +455,10 @@ def disable_product_on_channels(sku: str, source: str) -> Dict:
         results['refurbed']['message'] = f'Errore: {str(e)}'
         logger.error(f"Errore disabilitazione Refurbed: {e}")
     
-    # CDiscount - Disabilita offerta
+    # CDiscount
     try:
         oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)
         results['cdiscount']['attempted'] = True
-        
         success = oct_client.disable_offer(sku)
         results['cdiscount']['success'] = success
         results['cdiscount']['message'] = 'Disabilitato' if success else 'Package XML richiesto'
@@ -446,13 +466,13 @@ def disable_product_on_channels(sku: str, source: str) -> Dict:
         results['cdiscount']['message'] = f'Errore: {str(e)}'
         logger.error(f"Errore disabilitazione CDiscount: {e}")
     
-    # Log risultati
     logger.info(f"Risultati disabilitazione SKU {sku}:")
     logger.info(f"  - BackMarket: {results['backmarket']}")
     logger.info(f"  - Refurbed: {results['refurbed']}")
     logger.info(f"  - CDiscount: {results['cdiscount']}")
     
     return results
+
 
 def create_ddt_invoicex(order: Dict) -> Optional[str]:
     """Crea DDT su InvoiceX e ritorna il numero DDT"""
@@ -630,7 +650,7 @@ def dashboard():
     </head>
     <body>
         <div class="container">
-            <h1>🚀 ReflexMania - Gestione Ordini</h1>
+            <h1>ReflexMania - Gestione Ordini</h1>
             
             <div class="stats">
                 <div class="stat-card">
@@ -652,11 +672,11 @@ def dashboard():
             </div>
             
             <div class="actions">
-                <button class="btn btn-primary" onclick="refreshOrders()">🔄 Aggiorna Ordini</button>
-                <button class="btn btn-success" onclick="downloadCSV()">📦 Scarica CSV Packlink</button>
+                <button class="btn btn-primary" onclick="refreshOrders()">Aggiorna Ordini</button>
+                <button class="btn btn-success" onclick="downloadCSV()">Scarica CSV Packlink</button>
             </div>
             
-            <div id="loading">⏳ Caricamento in corso...</div>
+            <div id="loading">Caricamento in corso...</div>
             
             <table id="orders-table">
                 <thead>
@@ -673,7 +693,7 @@ def dashboard():
                     </tr>
                 </thead>
                 <tbody id="orders-body">
-                    <tr><td colspan="8" style="text-align: center; padding: 40px;">Caricamento ordini...</td></tr>
+                    <tr><td colspan="9" style="text-align: center; padding: 40px;">Caricamento ordini...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -713,7 +733,7 @@ def dashboard():
                 const tbody = document.getElementById('orders-body');
                 
                 if (orders.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px;">✅ Nessun ordine pendente</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 40px;">Nessun ordine pendente</td></tr>';
                     return;
                 }
                 
@@ -721,7 +741,6 @@ def dashboard():
                     const badgeClass = 'badge-' + order.source.toLowerCase().replace('c', 'c');
                     const date = new Date(order.date).toLocaleDateString('it-IT');
                     
-                    // Estrai info prodotti
                     let productInfo = 'N/A';
                     let skuInfo = 'N/A';
                     
@@ -730,62 +749,56 @@ def dashboard():
                         productInfo = item.name || 'N/A';
                         skuInfo = item.sku || 'N/A';
                         
-                        // Se ci sono più prodotti, mostra il conteggio
                         if (order.items.length > 1) {
                             productInfo += ` (+${order.items.length - 1})`;
                         }
                     }
                     
-                    // Determina i pulsanti da mostrare in base allo stato
                     let actionButtons = '';
                     let statusBadge = '';
                     
                     if (order.source === 'BackMarket') {
                         const stateNum = order.status;
                         
-                        // Pulsante Packing Slip per BackMarket (se disponibile)
                         let packingSlipBtn = '';
                         if (order.delivery_note) {
                             packingSlipBtn = `
                                 <a href="${order.delivery_note}" target="_blank" class="btn btn-primary btn-small" style="margin-right: 5px; background: #6c757d;">
-                                    📄 Packing Slip
+                                    Packing Slip
                                 </a>
                             `;
                         }
                         
                         if (stateNum === 1 || order.status === 'waiting_acceptance') {
-                            // Ordine da accettare - mostra tutti i pulsanti
                             actionButtons = `
                                 ${packingSlipBtn}
                                 <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
-                                    ✓ Accetta
+                                    Accetta
                                 </button>
                                 <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
-                                    📋 Crea DDT
+                                    Crea DDT
                                 </button>
                             `;
                             statusBadge = '<span class="badge badge-pending">Da Accettare</span>';
                         } else if (stateNum === 2 || order.status === 'accepted') {
-                            // Ordine già accettato - packing slip + DDT + Spedizione
                             actionButtons = `
                                 ${packingSlipBtn}
                                 <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
-                                    📋 Crea DDT
+                                    Crea DDT
                                 </button>
                                 <button class="btn btn-primary btn-small" onclick="markAsShipped('${order.order_id}', '${order.source}')" style="background: #17a2b8;">
-                                    📦 Spedito
+                                    Spedito
                                 </button>
                             `;
                             statusBadge = '<span class="badge badge-accepted">Accettato</span>';
                         } else if (stateNum === 3 || order.status === 'to_ship') {
-                            // Pronto per spedizione - packing slip + DDT + Spedizione
                             actionButtons = `
                                 ${packingSlipBtn}
                                 <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
-                                    📋 Crea DDT
+                                    Crea DDT
                                 </button>
                                 <button class="btn btn-primary btn-small" onclick="markAsShipped('${order.order_id}', '${order.source}')" style="background: #17a2b8;">
-                                    📦 Spedito
+                                    Spedito
                                 </button>
                             `;
                             statusBadge = '<span class="badge badge-accepted">Da Spedire</span>';
@@ -793,19 +806,18 @@ def dashboard():
                             actionButtons = `
                                 ${packingSlipBtn}
                                 <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
-                                    ✓ Accetta
+                                    Accetta
                                 </button>
                                 <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
-                                    📋 Crea DDT
+                                    Crea DDT
                                 </button>
                             `;
                             statusBadge = '<span class="badge badge-pending">Pendente</span>';
                         }
                     } else {
-                        // Per Refurbed e CDiscount mostra solo DDT (non serve accettazione)
                         actionButtons = `
                             <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
-                                📄 Crea DDT
+                                Crea DDT
                             </button>
                         `;
                         statusBadge = '<span class="badge badge-pending">Pendente</span>';
@@ -837,7 +849,7 @@ def dashboard():
                 
                 const trackingUrl = prompt(`Inserisci l'URL di tracking (opzionale):`);
                 
-                if (!confirm(`Confermi la spedizione dell'ordine ${orderId}?\n\nTracking: ${trackingNumber}`)) {
+                if (!confirm(`Confermi la spedizione dell'ordine ${orderId}?\\n\\nTracking: ${trackingNumber}`)) {
                     return;
                 }
                 
@@ -856,15 +868,15 @@ def dashboard():
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
-                        alert(`✅ Ordine ${orderId} marcato come spedito!\n\nTracking comunicato al marketplace.`);
+                        alert(`Ordine ${orderId} marcato come spedito!\\n\\nTracking comunicato al marketplace.`);
                         refreshOrders();
                     } else {
-                        alert('❌ Errore: ' + data.error);
+                        alert('Errore: ' + data.error);
                         document.getElementById('loading').style.display = 'none';
                     }
                 })
                 .catch(err => {
-                    alert('❌ Errore di connessione');
+                    alert('Errore di connessione');
                     console.error(err);
                     document.getElementById('loading').style.display = 'none';
                 });
@@ -885,22 +897,22 @@ def dashboard():
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
-                        alert(`✅ Ordine ${orderId} accettato con successo su ${source}!`);
+                        alert(`Ordine ${orderId} accettato con successo su ${source}!`);
                         refreshOrders();
                     } else {
-                        alert('❌ Errore: ' + data.error);
+                        alert('Errore: ' + data.error);
                         document.getElementById('loading').style.display = 'none';
                     }
                 })
                 .catch(err => {
-                    alert('❌ Errore di connessione');
+                    alert('Errore di connessione');
                     console.error(err);
                     document.getElementById('loading').style.display = 'none';
                 });
             }
             
             function createDDTOnly(orderId, source) {
-                if (!confirm(`Confermi la creazione del DDT per l'ordine ${orderId}?\n\nQuesto:\n- Disabiliterà i prodotti su tutti i canali\n- Creerà il DDT su InvoiceX`)) {
+                if (!confirm(`Confermi la creazione del DDT per l'ordine ${orderId}?\\n\\nQuesto:\\n- Disabiliterà i prodotti su tutti i canali\\n- Creerà il DDT su InvoiceX`)) {
                     return;
                 }
                 
@@ -914,44 +926,15 @@ def dashboard():
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
-                        alert(`✅ DDT creato con successo!\n\nNumero DDT: ${data.ddt_number}\n\nL'ordine è ora pronto per la spedizione.`);
+                        alert(`DDT creato con successo!\\n\\nNumero DDT: ${data.ddt_number}\\n\\nL'ordine è ora pronto per la spedizione.`);
                         refreshOrders();
                     } else {
-                        alert('❌ Errore: ' + data.error);
+                        alert('Errore: ' + data.error);
                         document.getElementById('loading').style.display = 'none';
                     }
                 })
                 .catch(err => {
-                    alert('❌ Errore di connessione');
-                    console.error(err);
-                    document.getElementById('loading').style.display = 'none';
-                });
-            }
-            
-            function acceptOrder(orderId, source) {
-                if (!confirm(`Confermi l'accettazione dell'ordine ${orderId}?\n\nQuesto:\n- Accetterà l'ordine su ${source}\n- Disabiliterà i prodotti su tutti i canali\n- Creerà il DDT su InvoiceX`)) {
-                    return;
-                }
-                
-                document.getElementById('loading').style.display = 'block';
-                
-                fetch('/api/accept_order', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({order_id: orderId, source: source})
-                })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        alert(`✅ Ordine accettato con successo!\n\nDDT: ${data.ddt_number}\n\nL'ordine è ora pronto per la spedizione.`);
-                        refreshOrders();
-                    } else {
-                        alert('❌ Errore: ' + data.error);
-                        document.getElementById('loading').style.display = 'none';
-                    }
-                })
-                .catch(err => {
-                    alert('❌ Errore di connessione');
+                    alert('Errore di connessione');
                     console.error(err);
                     document.getElementById('loading').style.display = 'none';
                 });
@@ -961,10 +944,7 @@ def dashboard():
                 window.location.href = '/api/packlink_csv';
             }
             
-            // Carica ordini all'avvio
             refreshOrders();
-            
-            // Auto-refresh ogni 2 minuti
             setInterval(refreshOrders, 120000);
         </script>
     </body>
@@ -972,6 +952,7 @@ def dashboard():
     """
     
     return html
+
 
 @app.route('/api/orders')
 def api_orders():
@@ -982,6 +963,7 @@ def api_orders():
     except Exception as e:
         logger.error(f"Errore API orders: {e}")
         return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/mark_shipped', methods=['POST'])
 def api_mark_shipped():
@@ -996,11 +978,9 @@ def api_mark_shipped():
         if not tracking_number:
             return jsonify({'success': False, 'error': 'Tracking number obbligatorio'}), 400
         
-        # BackMarket: aggiorna ordine a stato 3 (Shipped)
         if source == 'BackMarket':
             bm_client = BackMarketClient(BACKMARKET_TOKEN)
             
-            # Prima recupera i dettagli dell'ordine per ottenere gli SKU
             order_url = f"{bm_client.base_url}/ws/orders/{order_id}"
             order_response = requests.get(order_url, headers=bm_client.headers)
             
@@ -1013,13 +993,12 @@ def api_mark_shipped():
             if not orderlines:
                 return jsonify({'success': False, 'error': 'Nessuna orderline trovata'}), 500
             
-            # Aggiorna la prima orderline con tracking (BackMarket applicherà a tutte)
             sku = orderlines[0].get('listing') or orderlines[0].get('serial_number')
             
             update_url = f"{bm_client.base_url}/ws/orders/{order_id}"
             update_data = {
                 "order_id": int(order_id),
-                "new_state": 3,  # Shipped
+                "new_state": 3,
                 "sku": sku,
                 "tracking_number": tracking_number,
                 "tracking_url": tracking_url
@@ -1033,8 +1012,6 @@ def api_mark_shipped():
             
             logger.info(f"Ordine {order_id} marcato come spedito su BackMarket")
         
-        # TODO: Implementare per Refurbed e CDiscount
-        
         return jsonify({
             'success': True,
             'order_id': order_id,
@@ -1046,6 +1023,7 @@ def api_mark_shipped():
         logger.error(f"Errore mark_shipped: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
 @app.route('/api/accept_order_only', methods=['POST'])
 def api_accept_order_only():
     """API: accetta solo l'ordine sul marketplace (senza DDT)"""
@@ -1054,7 +1032,6 @@ def api_accept_order_only():
         order_id = data.get('order_id')
         source = data.get('source')
         
-        # Solo BackMarket ha bisogno di accettazione esplicita
         if source == 'BackMarket':
             bm_client = BackMarketClient(BACKMARKET_TOKEN)
             if not bm_client.accept_order(order_id):
@@ -1070,6 +1047,7 @@ def api_accept_order_only():
         logger.error(f"Errore accept_order_only: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
 @app.route('/api/create_ddt_only', methods=['POST'])
 def api_create_ddt_only():
     """API: crea solo DDT e disabilita prodotti (senza accettazione ordine)"""
@@ -1078,20 +1056,17 @@ def api_create_ddt_only():
         order_id = data.get('order_id')
         source = data.get('source')
         
-        # Trova l'ordine completo
         all_orders = get_pending_orders()
         order = next((o for o in all_orders if o['order_id'] == order_id and o['source'] == source), None)
         
         if not order:
             return jsonify({'success': False, 'error': 'Ordine non trovato'}), 404
         
-        # 1. Disabilita prodotti su tutti i canali
         disable_results = {}
         for item in order['items']:
             result = disable_product_on_channels(item['sku'], source)
             disable_results[item['sku']] = result
         
-        # 2. Crea DDT su InvoiceX
         ddt_number = create_ddt_invoicex(order)
         if not ddt_number:
             return jsonify({'success': False, 'error': 'Errore creazione DDT'}), 500
@@ -1107,6 +1082,7 @@ def api_create_ddt_only():
         logger.error(f"Errore create_ddt_only: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
 @app.route('/api/accept_order', methods=['POST'])
 def api_accept_order():
     """API: accetta ordine e crea DDT"""
@@ -1115,26 +1091,22 @@ def api_accept_order():
         order_id = data.get('order_id')
         source = data.get('source')
         
-        # Trova l'ordine completo
         all_orders = get_pending_orders()
         order = next((o for o in all_orders if o['order_id'] == order_id and o['source'] == source), None)
         
         if not order:
             return jsonify({'success': False, 'error': 'Ordine non trovato'}), 404
         
-        # 1. Accetta ordine sul marketplace
         if source == 'BackMarket':
             bm_client = BackMarketClient(BACKMARKET_TOKEN)
             if not bm_client.accept_order(order_id):
                 return jsonify({'success': False, 'error': 'Errore accettazione ordine'}), 500
         
-        # 2. Disabilita prodotti su tutti i canali
         disable_results = {}
         for item in order['items']:
             result = disable_product_on_channels(item['sku'], source)
             disable_results[item['sku']] = result
         
-        # 3. Crea DDT su InvoiceX
         ddt_number = create_ddt_invoicex(order)
         if not ddt_number:
             return jsonify({'success': False, 'error': 'Errore creazione DDT'}), 500
@@ -1150,17 +1122,15 @@ def api_accept_order():
         logger.error(f"Errore accept_order: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
 @app.route('/api/packlink_csv')
 def api_packlink_csv():
     """API: genera CSV Packlink per ordini accettati"""
     try:
-        # Recupera ordini pendenti (che hanno bisogno di etichetta)
         orders = get_pending_orders()
         
         rows = []
         for order in orders:
-            # Packlink richiede dati mittente (ReflexMania) + destinatario
-            # Split nome/cognome destinatario
             name_parts = order['customer_name'].split()
             first_name = name_parts[0] if name_parts else ''
             last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
@@ -1201,7 +1171,6 @@ def api_packlink_csv():
         
         df = pd.DataFrame(rows)
         
-        # CSV con separatore punto e virgola
         csv_buffer = BytesIO()
         csv_string = df.to_csv(sep=';', index=False, encoding='utf-8')
         csv_buffer.write(csv_string.encode('utf-8'))
@@ -1220,9 +1189,11 @@ def api_packlink_csv():
         logger.error(f"Errore packlink CSV: {e}")
         return jsonify({'error': str(e)}), 500
 
+
 @app.route('/health')
 def health():
     return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
+
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))

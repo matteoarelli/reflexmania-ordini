@@ -1154,43 +1154,63 @@ def api_accept_order():
 def api_packlink_csv():
     """API: genera CSV Packlink per ordini accettati"""
     try:
-        # TODO: Recupera solo ordini accettati dal DB locale o flag
-        # Per ora usiamo tutti gli ordini pendenti
+        # Recupera ordini pendenti (che hanno bisogno di etichetta)
         orders = get_pending_orders()
         
         rows = []
         for order in orders:
-            for item in order.get('items', []):
-                row = {
-                    'Destinatario': order['customer_name'],
-                    'Indirizzo': order['address'],
-                    'CAP': order['postal_code'],
-                    'Città': order['city'],
-                    'Paese': order['country'],
-                    'Telefono': order['customer_phone'],
-                    'Email': order['customer_email'],
-                    'Riferimento': f"{order['source']}-{order['order_id']}",
-                    'Contenuto': item['name'],
-                    'Valore dichiarato': order['total'],
-                    'Peso (kg)': '0.5',
-                    'Lunghezza (cm)': '20',
-                    'Larghezza (cm)': '15',
-                    'Altezza (cm)': '10',
-                }
-                rows.append(row)
+            # Packlink richiede dati mittente (ReflexMania) + destinatario
+            # Split nome/cognome destinatario
+            name_parts = order['customer_name'].split()
+            first_name = name_parts[0] if name_parts else ''
+            last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
+            
+            row = {
+                'Numero di ordine': f"{order['source']}-{order['order_id']}",
+                'nome mittente': 'ReflexMania',
+                'Cognome mittente': 'SRL',
+                'Azienda mittente': 'ReflexMania SRL',
+                'Indirizzo Di Spedizione 1': 'Via Don Minzoni 2/a',
+                'Indirizzo Di Spedizione 2': '',
+                'CAP Spedizione': '20021',
+                'citta Spedizione': 'Bollate',
+                'provincia di Spedizione': 'MI',
+                'Paese di spedizione': 'IT',
+                'Telefono spedizione': '3478065337',
+                'Email Spedizione': 'info@reflexmania.it',
+                'Nome destinatario': first_name,
+                'Cognome destinatario': last_name,
+                'Azienda destinatario': '',
+                'Indirizzo di consegna 1': order['address'],
+                'Indirizzo di consegna 2': '',
+                'CAP di consegna': order['postal_code'],
+                'citta di consegna': order['city'],
+                'provincia di consegna': '',
+                'Paese di consegna': order['country'],
+                'Telefono di consegna': order['customer_phone'],
+                'Email di consegna': order['customer_email'],
+                'assicurazione': 'NO',
+                'Titolo dell\'oggetto': order['items'][0]['name'] if order['items'] else 'Prodotto',
+                'Valore merce': str(int(order['total'])),
+                'Larghezza oggetto': '20',
+                'Altezza oggetto': '25',
+                'Lughezza oggetto': '29',
+                'Peso dell\'oggetto': '3'
+            }
+            rows.append(row)
         
         df = pd.DataFrame(rows)
-        csv_buffer = StringIO()
-        df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8')
         
-        csv_bytes = BytesIO()
-        csv_bytes.write(csv_buffer.getvalue().encode('utf-8'))
-        csv_bytes.seek(0)
+        # CSV con separatore punto e virgola
+        csv_buffer = BytesIO()
+        csv_string = df.to_csv(sep=';', index=False, encoding='utf-8')
+        csv_buffer.write(csv_string.encode('utf-8'))
+        csv_buffer.seek(0)
         
         filename = f"packlink_orders_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         
         return send_file(
-            csv_bytes,
+            csv_buffer,
             mimetype='text/csv',
             as_attachment=True,
             download_name=filename

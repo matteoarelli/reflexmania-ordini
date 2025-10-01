@@ -300,6 +300,7 @@ def normalize_order(order: Dict, source: str) -> Dict:
 def get_pending_orders() -> List[Dict]:
     """Recupera tutti gli ordini pendenti da tutti i canali"""
     all_orders = []
+    seen_order_ids = set()  # Per deduplicare ordini BackMarket
     
     # BackMarket - tutti gli ordini non ancora spediti
     bm_client = BackMarketClient(BACKMARKET_TOKEN)
@@ -311,12 +312,19 @@ def get_pending_orders() -> List[Dict]:
         for order in orders:
             # Filtra solo ordini NON già spediti (state != 9)
             order_state = order.get('state', 0)
+            order_id = str(order.get('order_id'))
+            
+            # Deduplica: salta se già visto questo order_id
+            if order_id in seen_order_ids:
+                continue
+            
             if order_state != 9:  # 9 = Shipped
                 all_orders.append(normalize_order(order, 'backmarket'))
+                seen_order_ids.add(order_id)
                 bm_count += 1
         logger.info(f"BackMarket status '{status}': {len(orders)} ordini totali")
     
-    logger.info(f"BackMarket totale NON spediti: {bm_count} ordini")
+    logger.info(f"BackMarket totale NON spediti (deduplicati): {bm_count} ordini")
     
     # Refurbed - solo ordini non ancora spediti
     rf_client = RefurbishedClient(REFURBED_TOKEN)
@@ -664,31 +672,58 @@ def dashboard():
                     const badgeClass = 'badge-' + order.source.toLowerCase().replace('c', 'c');
                     const date = new Date(order.date).toLocaleDateString('it-IT');
                     
-                    // Determina il pulsante da mostrare in base allo stato
-                    let actionButton = '';
+                    // Determina i pulsanti da mostrare in base allo stato
+                    let actionButtons = '';
                     let statusBadge = '';
                     
                     if (order.source === 'BackMarket') {
-                        // Per BackMarket mostra pulsante solo se waiting_acceptance (stato 1)
-                        // Altri stati: 2=accepted, 3=to_ship
                         const stateNum = order.status;
                         
                         if (stateNum === 1 || order.status === 'waiting_acceptance') {
-                            actionButton = `<button class="btn btn-success btn-small" onclick="acceptOrder('${order.order_id}', '${order.source}')">✓ Accetta e Crea DDT</button>`;
+                            // Ordine da accettare - mostra entrambi i pulsanti
+                            actionButtons = `
+                                <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
+                                    ✓ Accetta Ordine
+                                </button>
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
+                                    📄 Crea DDT
+                                </button>
+                            `;
                             statusBadge = '<span class="badge badge-pending">Da Accettare</span>';
                         } else if (stateNum === 2 || order.status === 'accepted') {
-                            actionButton = `<button class="btn btn-success btn-small" onclick="acceptOrder('${order.order_id}', '${order.source}')">📄 Crea DDT</button>`;
+                            // Ordine già accettato - solo DDT
+                            actionButtons = `
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
+                                    📄 Crea DDT
+                                </button>
+                            `;
                             statusBadge = '<span class="badge badge-accepted">Accettato</span>';
                         } else if (stateNum === 3 || order.status === 'to_ship') {
-                            actionButton = `<button class="btn btn-success btn-small" onclick="acceptOrder('${order.order_id}', '${order.source}')">📄 Crea DDT</button>`;
+                            // Pronto per spedizione - solo DDT
+                            actionButtons = `
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
+                                    📄 Crea DDT
+                                </button>
+                            `;
                             statusBadge = '<span class="badge badge-accepted">Da Spedire</span>';
                         } else {
-                            actionButton = `<button class="btn btn-success btn-small" onclick="acceptOrder('${order.order_id}', '${order.source}')">✓ Accetta e Crea DDT</button>`;
+                            actionButtons = `
+                                <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
+                                    ✓ Accetta Ordine
+                                </button>
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
+                                    📄 Crea DDT
+                                </button>
+                            `;
                             statusBadge = '<span class="badge badge-pending">Pendente</span>';
                         }
                     } else {
-                        // Per Refurbed e CDiscount mostra sempre il pulsante
-                        actionButton = `<button class="btn btn-success btn-small" onclick="acceptOrder('${order.order_id}', '${order.source}')">✓ Accetta e Crea DDT</button>`;
+                        // Per Refurbed e CDiscount mostra solo DDT (non serve accettazione)
+                        actionButtons = `
+                            <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
+                                📄 Crea DDT
+                            </button>
+                        `;
                         statusBadge = '<span class="badge badge-pending">Pendente</span>';
                     }
                     
@@ -701,10 +736,68 @@ def dashboard():
                             <td>${date}</td>
                             <td><strong>€${order.total.toFixed(2)}</strong></td>
                             <td>${statusBadge}</td>
-                            <td>${actionButton}</td>
+                            <td>${actionButtons}</td>
                         </tr>
                     `;
                 }).join('');
+            }
+            
+            function acceptOrderOnly(orderId, source) {
+                if (!confirm(`Confermi l'accettazione dell'ordine ${orderId} su ${source}?`)) {
+                    return;
+                }
+                
+                document.getElementById('loading').style.display = 'block';
+                
+                fetch('/api/accept_order_only', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({order_id: orderId, source: source})
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        alert(`✅ Ordine ${orderId} accettato con successo su ${source}!`);
+                        refreshOrders();
+                    } else {
+                        alert('❌ Errore: ' + data.error);
+                        document.getElementById('loading').style.display = 'none';
+                    }
+                })
+                .catch(err => {
+                    alert('❌ Errore di connessione');
+                    console.error(err);
+                    document.getElementById('loading').style.display = 'none';
+                });
+            }
+            
+            function createDDTOnly(orderId, source) {
+                if (!confirm(`Confermi la creazione del DDT per l'ordine ${orderId}?\n\nQuesto:\n- Disabiliterà i prodotti su tutti i canali\n- Creerà il DDT su InvoiceX`)) {
+                    return;
+                }
+                
+                document.getElementById('loading').style.display = 'block';
+                
+                fetch('/api/create_ddt_only', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({order_id: orderId, source: source})
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        alert(`✅ DDT creato con successo!\n\nNumero DDT: ${data.ddt_number}\n\nL'ordine è ora pronto per la spedizione.`);
+                        refreshOrders();
+                    } else {
+                        alert('❌ Errore: ' + data.error);
+                        document.getElementById('loading').style.display = 'none';
+                    }
+                })
+                .catch(err => {
+                    alert('❌ Errore di connessione');
+                    console.error(err);
+                    document.getElementById('loading').style.display = 'none';
+                });
             }
             
             function acceptOrder(orderId, source) {
@@ -761,6 +854,67 @@ def api_orders():
     except Exception as e:
         logger.error(f"Errore API orders: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/accept_order_only', methods=['POST'])
+def api_accept_order_only():
+    """API: accetta solo l'ordine sul marketplace (senza DDT)"""
+    try:
+        data = request.json
+        order_id = data.get('order_id')
+        source = data.get('source')
+        
+        # Solo BackMarket ha bisogno di accettazione esplicita
+        if source == 'BackMarket':
+            bm_client = BackMarketClient(BACKMARKET_TOKEN)
+            if not bm_client.accept_order(order_id):
+                return jsonify({'success': False, 'error': 'Errore accettazione ordine'}), 500
+        
+        return jsonify({
+            'success': True,
+            'order_id': order_id,
+            'message': 'Ordine accettato sul marketplace'
+        })
+        
+    except Exception as e:
+        logger.error(f"Errore accept_order_only: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/create_ddt_only', methods=['POST'])
+def api_create_ddt_only():
+    """API: crea solo DDT e disabilita prodotti (senza accettazione ordine)"""
+    try:
+        data = request.json
+        order_id = data.get('order_id')
+        source = data.get('source')
+        
+        # Trova l'ordine completo
+        all_orders = get_pending_orders()
+        order = next((o for o in all_orders if o['order_id'] == order_id and o['source'] == source), None)
+        
+        if not order:
+            return jsonify({'success': False, 'error': 'Ordine non trovato'}), 404
+        
+        # 1. Disabilita prodotti su tutti i canali
+        disable_results = {}
+        for item in order['items']:
+            result = disable_product_on_channels(item['sku'], source)
+            disable_results[item['sku']] = result
+        
+        # 2. Crea DDT su InvoiceX
+        ddt_number = create_ddt_invoicex(order)
+        if not ddt_number:
+            return jsonify({'success': False, 'error': 'Errore creazione DDT'}), 500
+        
+        return jsonify({
+            'success': True,
+            'ddt_number': ddt_number,
+            'order_id': order_id,
+            'message': 'DDT creato con successo'
+        })
+        
+    except Exception as e:
+        logger.error(f"Errore create_ddt_only: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/accept_order', methods=['POST'])
 def api_accept_order():

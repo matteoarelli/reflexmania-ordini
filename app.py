@@ -402,45 +402,28 @@ def get_pending_orders() -> List[Dict]:
     
     logger.info(f"BackMarket totale NON spediti (deduplicati): {bm_count} ordini")
     
-    # Refurbed - recupera ordini NEW e ACCEPTED, poi filtra per data
+    # Refurbed - recupera TUTTI gli ordini senza filtro stato per debug
     rf_client = RefurbishedClient(REFURBED_TOKEN)
     
-    # Chiamata separata per ordini NEW
-    rf_orders_new = rf_client.get_orders(state='NEW', limit=100)
+    # Chiamata SENZA filtro stato per vedere tutti gli ordini
+    rf_orders_all = rf_client.get_orders(state=None, limit=200)
     
-    # Chiamata separata per ordini ACCEPTED
-    rf_orders_accepted = rf_client.get_orders(state='ACCEPTED', limit=100)
+    logger.info(f"Refurbed: recuperati {len(rf_orders_all)} ordini TOTALI senza filtri")
     
-    # Combina i risultati
-    all_rf_orders = rf_orders_new + rf_orders_accepted
+    # Log primi 5 ordini per debug
+    for i, order in enumerate(rf_orders_all[:5]):
+        logger.info(f"DEBUG Refurbed order {order.get('id')}: state={order.get('state')}, created_at={order.get('created_at')}")
     
-    # Filtra ordini recenti (ultimi 30 giorni)
-    cutoff_date = datetime.now() - timedelta(days=30)
-    recent_orders = []
+    # Filtra solo ordini NON spediti/cancellati
+    rf_pending = []
+    for order in rf_orders_all:
+        order_state = order.get('state', 'NEW')
+        if order_state not in ['SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED']:
+            rf_pending.append(order)
+            all_orders.append(normalize_order(order, 'refurbed'))
     
-    for order in all_rf_orders:
-        order_date_str = order.get('created_at', '')
-        if order_date_str:
-            try:
-                # Gestisci formati ISO con Z o timezone
-                order_date_str_clean = order_date_str.replace('Z', '+00:00')
-                order_date = datetime.fromisoformat(order_date_str_clean)
-                
-                # Rimuovi timezone per confronto
-                if order_date.tzinfo:
-                    order_date = order_date.replace(tzinfo=None)
-                
-                if order_date >= cutoff_date:
-                    recent_orders.append(normalize_order(order, 'refurbed'))
-            except Exception as e:
-                logger.warning(f"Errore parsing data ordine Refurbed {order.get('id')}: {e}")
-                # In caso di errore, includi l'ordine comunque
-                recent_orders.append(normalize_order(order, 'refurbed'))
-    
-    rf_count = len(recent_orders)
-    all_orders.extend(recent_orders)
-    
-    logger.info(f"Refurbed: {rf_count} ordini pendenti ultimi 30 giorni (NEW: {len(rf_orders_new)}, ACCEPTED: {len(rf_orders_accepted)} totali)")
+    rf_count = len(rf_pending)
+    logger.info(f"Refurbed: {rf_count} ordini pendenti su {len(rf_orders_all)} totali")
     
     # CDiscount
     oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)

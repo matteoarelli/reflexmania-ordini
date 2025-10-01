@@ -15,7 +15,7 @@ import requests
 import mysql.connector
 import pandas as pd
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import StringIO, BytesIO
 import logging
 from typing import List, Dict, Optional
@@ -402,7 +402,7 @@ def get_pending_orders() -> List[Dict]:
     
     logger.info(f"BackMarket totale NON spediti (deduplicati): {bm_count} ordini")
     
-    # Refurbed - recupera ordini NEW e ACCEPTED separatamente
+    # Refurbed - recupera ordini NEW e ACCEPTED, poi filtra per data
     rf_client = RefurbishedClient(REFURBED_TOKEN)
     
     # Chiamata separata per ordini NEW
@@ -413,12 +413,34 @@ def get_pending_orders() -> List[Dict]:
     
     # Combina i risultati
     all_rf_orders = rf_orders_new + rf_orders_accepted
-    rf_count = len(all_rf_orders)
+    
+    # Filtra ordini recenti (ultimi 30 giorni)
+    cutoff_date = datetime.now() - timedelta(days=30)
+    recent_orders = []
     
     for order in all_rf_orders:
-        all_orders.append(normalize_order(order, 'refurbed'))
+        order_date_str = order.get('created_at', '')
+        if order_date_str:
+            try:
+                # Gestisci formati ISO con Z o timezone
+                order_date_str_clean = order_date_str.replace('Z', '+00:00')
+                order_date = datetime.fromisoformat(order_date_str_clean)
+                
+                # Rimuovi timezone per confronto
+                if order_date.tzinfo:
+                    order_date = order_date.replace(tzinfo=None)
+                
+                if order_date >= cutoff_date:
+                    recent_orders.append(normalize_order(order, 'refurbed'))
+            except Exception as e:
+                logger.warning(f"Errore parsing data ordine Refurbed {order.get('id')}: {e}")
+                # In caso di errore, includi l'ordine comunque
+                recent_orders.append(normalize_order(order, 'refurbed'))
     
-    logger.info(f"Refurbed: {rf_count} ordini pendenti (NEW: {len(rf_orders_new)}, ACCEPTED: {len(rf_orders_accepted)})")
+    rf_count = len(recent_orders)
+    all_orders.extend(recent_orders)
+    
+    logger.info(f"Refurbed: {rf_count} ordini pendenti ultimi 30 giorni (NEW: {len(rf_orders_new)}, ACCEPTED: {len(rf_orders_accepted)} totali)")
     
     # CDiscount
     oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)

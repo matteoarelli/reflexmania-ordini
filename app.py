@@ -77,14 +77,48 @@ class BackMarketClient:
             return []
     
     def accept_order(self, order_id: str) -> bool:
-        """Accetta un ordine su BackMarket"""
+        """Accetta un ordine su BackMarket aggiornando le orderlines allo stato 2"""
         try:
-            url = f"{self.base_url}/ws/orders/{order_id}/accept"
-            response = requests.post(url, headers=self.headers)
-            response.raise_for_status()
-            return True
+            # Endpoint per aggiornare orderlines
+            url = f"{self.base_url}/ws/orders/{order_id}"
+            
+            # Per accettare: aggiorna le orderlines allo stato 2 (Accepted)
+            # Stati Orderline:
+            # 1 = Paid (da accettare), 2 = Accepted, 3 = Shipped
+            data = {
+                "order_id": int(order_id),
+                "new_state": 2  # Accetta tutte le orderlines
+            }
+            
+            response = requests.post(url, headers=self.headers, json=data)
+            
+            if response.status_code == 200:
+                logger.info(f"Ordine {order_id} accettato - orderlines aggiornate allo stato 2")
+                return True
+            elif response.status_code == 400:
+                error_text = response.text
+                logger.warning(f"Errore 400 accettazione ordine {order_id}: {error_text}")
+                
+                # Se orderlines già nello stato 2, considera successo
+                if "state" in error_text.lower() or "already" in error_text.lower():
+                    logger.info(f"Orderlines già nello stato corretto")
+                    return True
+                return False
+            elif response.status_code == 403:
+                logger.error(f"Accesso negato (403) - verifica che il token API abbia permessi di scrittura")
+                return False
+            elif response.status_code == 404:
+                logger.error(f"Ordine {order_id} non trovato (404)")
+                return False
+            else:
+                logger.error(f"Errore accettazione: {response.status_code} - {response.text}")
+                return False
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Errore connessione BackMarket API: {e}")
+            return False
         except Exception as e:
-            logger.error(f"Errore accettazione ordine BackMarket: {e}")
+            logger.error(f"Errore imprevisto: {e}")
             return False
     
     def disable_listing(self, listing_id: str) -> bool:

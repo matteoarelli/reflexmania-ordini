@@ -35,7 +35,7 @@ BACKMARKET_BASE_URL = "https://www.backmarket.fr"
 
 # Refurbed
 REFURBED_TOKEN = os.getenv('REFURBED_TOKEN', '277931ea-1ede-4a14-8aaa-41b2222d2aba')
-REFURBED_BASE_URL = "https://merchant.refurbed.com/api/v1"
+REFURBED_BASE_URL = "https://api.refurbed.com"
 
 # CDiscount (Octopia)
 OCTOPIA_CLIENT_ID = os.getenv('OCTOPIA_CLIENT_ID', 'reflexmania')
@@ -79,7 +79,6 @@ class BackMarketClient:
     def accept_order(self, order_id: str) -> bool:
         """Accetta un ordine su BackMarket aggiornando le orderlines allo stato 2"""
         try:
-            # Prima recupera i dettagli dell'ordine per ottenere gli SKU
             order_url = f"{self.base_url}/ws/orders/{order_id}"
             order_response = requests.get(order_url, headers=self.headers)
             
@@ -94,7 +93,6 @@ class BackMarketClient:
                 logger.error(f"Nessuna orderline trovata per ordine {order_id}")
                 return False
             
-            # Accetta ogni orderline specificando il suo SKU
             success_count = 0
             for orderline in orderlines:
                 sku = orderline.get('listing') or orderline.get('serial_number')
@@ -103,11 +101,10 @@ class BackMarketClient:
                     logger.warning(f"SKU mancante per orderline in ordine {order_id}")
                     continue
                 
-                # Aggiorna orderline con SKU specifico
                 update_url = f"{self.base_url}/ws/orders/{order_id}"
                 data = {
                     "order_id": int(order_id),
-                    "new_state": 2,  # Accepted
+                    "new_state": 2,
                     "sku": sku
                 }
                 
@@ -151,50 +148,64 @@ class RefurbishedClient:
         self.token = token
         self.base_url = REFURBED_BASE_URL
         self.headers = {
-            'Authorization': f'Bearer {token}',  # Bearer, non Plain
+            'Authorization': f'Plain {token}',
             'Content-Type': 'application/json',
             'Accept': 'application/json'
         }
     
     def get_orders(self, state: str = None, limit: int = 100) -> List[Dict]:
-        """Recupera ordini da Refurbed - API REST standard"""
+        """Recupera ordini da Refurbed - gRPC style API (POST method)"""
         try:
-            url = f"{self.base_url}/orders"
-            params = {'limit': limit}
+            url = f"{self.base_url}/refb.merchant.v1.OrderService/ListOrders"
             
-            # Filtra per stato se specificato (NEW, SHIPPED, DELIVERED, CANCELLED)
+            body = {
+                "pagination": {
+                    "limit": limit
+                }
+            }
+            
             if state:
-                params['state'] = state
+                body["state_filters"] = [state]
             
-            response = requests.get(url, headers=self.headers, params=params)
+            logger.info(f"Refurbed: POST {url}")
+            logger.info(f"Refurbed: body {body}")
+            
+            response = requests.post(url, headers=self.headers, json=body)
+            
+            logger.info(f"Refurbed: status {response.status_code}")
+            logger.info(f"Refurbed: response preview: {response.text[:500]}")
+            
             response.raise_for_status()
             
             data = response.json()
-            # Refurbed ritorna {data: [...], meta: {...}}
-            orders = data.get('data', [])
+            orders = data.get('orders', [])
             
-            logger.info(f"Refurbed: recuperati {len(orders)} ordini (stato: {state or 'tutti'})")
+            logger.info(f"Refurbed: recuperati {len(orders)} ordini")
             return orders
             
         except requests.exceptions.HTTPError as e:
             logger.error(f"Errore HTTP Refurbed: {e.response.status_code}")
-            if hasattr(e.response, 'text'):
-                logger.error(f"Response body: {e.response.text}")
+            logger.error(f"Response: {e.response.text}")
             return []
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Errore connessione Refurbed: {e}")
+        except requests.exceptions.JSONDecodeError as e:
+            logger.error(f"Errore JSON Refurbed: {e}")
+            if 'response' in locals():
+                logger.error(f"Response text: {response.text}")
             return []
         except Exception as e:
-            logger.error(f"Errore imprevisto Refurbed: {e}")
+            logger.error(f"Errore Refurbed: {e}")
             return []
     
     def disable_offer(self, sku: str) -> bool:
         """Disabilita offerta (stock = 0)"""
         try:
-            url = f"{self.base_url}/offers/{sku}"
-            data = {'stock': 0}
+            url = f"{self.base_url}/refb.merchant.v1.OfferService/UpdateOffer"
+            body = {
+                "identifier": {"sku": sku},
+                "stock": 0
+            }
             
-            response = requests.patch(url, headers=self.headers, json=data)
+            response = requests.post(url, headers=self.headers, json=body)
             response.raise_for_status()
             
             logger.info(f"Offerta Refurbed SKU {sku} disabilitata")
@@ -309,30 +320,28 @@ def normalize_order(order: Dict, source: str) -> Dict:
         shipping = order.get('shipping_address', {})
         items = []
         
-        # Refurbed può avere "line_items" o "items"
-        order_items = order.get('line_items', order.get('items', []))
-        
-        for item in order_items:
+        for item in order.get('items', []):
+            offer_data = item.get('offer_data', {})
             items.append({
-                'sku': item.get('sku', item.get('offer_id', item.get('item_identifier', ''))),
-                'name': item.get('title', item.get('name', 'N/A')),
-                'quantity': item.get('quantity', 1)
+                'sku': offer_data.get('sku', item.get('id', '')),
+                'name': offer_data.get('title', 'N/A'),
+                'quantity': 1
             })
         
         return {
-            'order_id': str(order.get('id', order.get('order_id', ''))),
+            'order_id': str(order.get('id', '')),
             'source': 'Refurbed',
             'status': order.get('state', 'NEW'),
-            'date': order.get('created_at', order.get('released_at', '')),
-            'customer_name': f"{shipping.get('first_name', '')} {shipping.get('last_name', shipping.get('family_name', ''))}".strip(),
-            'customer_email': order.get('email', order.get('customer_email', '')),
-            'customer_phone': shipping.get('phone', shipping.get('phone_number', '')),
-            'address': f"{shipping.get('street', shipping.get('street_name', ''))} {shipping.get('house_number', shipping.get('house_no', ''))}".strip(),
-            'city': shipping.get('city', shipping.get('town', '')),
-            'postal_code': shipping.get('zip', shipping.get('post_code', '')),
-            'country': shipping.get('country', shipping.get('country_code', '')),
+            'date': order.get('created_at', ''),
+            'customer_name': f"{shipping.get('first_name', '')} {shipping.get('last_name', '')}".strip(),
+            'customer_email': order.get('email', ''),
+            'customer_phone': shipping.get('phone', ''),
+            'address': f"{shipping.get('street', '')} {shipping.get('house_no', '')} {shipping.get('supplement', '')}".strip(),
+            'city': shipping.get('town', ''),
+            'postal_code': shipping.get('post_code', ''),
+            'country': shipping.get('country_code', ''),
             'items': items,
-            'total': float(order.get('total', order.get('total_paid', 0))),
+            'total': float(order.get('settlement_total_paid', order.get('total_paid', 0))),
             'accepted': False
         }
     
@@ -374,7 +383,7 @@ def get_pending_orders() -> List[Dict]:
     all_orders = []
     seen_order_ids = set()
     
-    # BackMarket - tutti gli ordini non ancora spediti
+    # BackMarket
     bm_client = BackMarketClient(BACKMARKET_TOKEN)
     bm_count = 0
     
@@ -387,7 +396,7 @@ def get_pending_orders() -> List[Dict]:
             if order_id in seen_order_ids:
                 continue
             
-            if order_state != 9:  # 9 = Shipped
+            if order_state != 9:
                 all_orders.append(normalize_order(order, 'backmarket'))
                 seen_order_ids.add(order_id)
                 bm_count += 1
@@ -395,7 +404,7 @@ def get_pending_orders() -> List[Dict]:
     
     logger.info(f"BackMarket totale NON spediti (deduplicati): {bm_count} ordini")
     
-    # Refurbed - solo ordini non ancora spediti
+    # Refurbed
     rf_client = RefurbishedClient(REFURBED_TOKEN)
     rf_orders = rf_client.get_orders()
     rf_count = 0
@@ -408,7 +417,7 @@ def get_pending_orders() -> List[Dict]:
     
     logger.info(f"Refurbed: {rf_count} ordini da processare su {len(rf_orders)} totali")
     
-    # CDiscount - solo ordini non ancora spediti
+    # CDiscount
     oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)
     oct_orders = oct_client.get_orders()
     cd_count = 0
@@ -433,7 +442,6 @@ def disable_product_on_channels(sku: str, source: str) -> Dict:
     
     logger.info(f"Disabilitazione prodotto SKU {sku} su tutti i canali")
     
-    # BackMarket
     try:
         bm_client = BackMarketClient(BACKMARKET_TOKEN)
         results['backmarket']['attempted'] = True
@@ -444,7 +452,6 @@ def disable_product_on_channels(sku: str, source: str) -> Dict:
         results['backmarket']['message'] = f'Errore: {str(e)}'
         logger.error(f"Errore disabilitazione BackMarket: {e}")
     
-    # Refurbed
     try:
         rf_client = RefurbishedClient(REFURBED_TOKEN)
         results['refurbed']['attempted'] = True
@@ -455,7 +462,6 @@ def disable_product_on_channels(sku: str, source: str) -> Dict:
         results['refurbed']['message'] = f'Errore: {str(e)}'
         logger.error(f"Errore disabilitazione Refurbed: {e}")
     
-    # CDiscount
     try:
         oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)
         results['cdiscount']['attempted'] = True
@@ -480,7 +486,6 @@ def create_ddt_invoicex(order: Dict) -> Optional[str]:
         conn = mysql.connector.connect(**INVOICEX_CONFIG)
         cursor = conn.cursor()
         
-        # Ottieni prossimo numero DDT
         query_num = """
         SELECT MAX(CAST(numero AS UNSIGNED)) as max_num 
         FROM documenti_vendita 
@@ -491,7 +496,6 @@ def create_ddt_invoicex(order: Dict) -> Optional[str]:
         max_num = result[0] if result[0] else 0
         ddt_number = str(max_num + 1).zfill(4)
         
-        # Inserisci DDT
         query_header = """
         INSERT INTO documenti_vendita 
         (tipo, numero, data, cliente, totale, note, stato)
@@ -511,7 +515,6 @@ def create_ddt_invoicex(order: Dict) -> Optional[str]:
         cursor.execute(query_header, values_header)
         ddt_id = cursor.lastrowid
         
-        # Inserisci righe
         query_lines = """
         INSERT INTO documenti_vendita_righe
         (documento_id, descrizione, quantita, prezzo_unitario)

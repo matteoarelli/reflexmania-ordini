@@ -153,7 +153,7 @@ class RefurbishedClient:
             'Accept': 'application/json'
         }
     
-    def get_orders(self, state: str = None, limit: int = 100) -> List[Dict]:
+    def get_orders(self, state: str = None, limit: int = 100, sort_desc: bool = True) -> List[Dict]:
         """Recupera ordini da Refurbed - gRPC style API (POST method)"""
         try:
             url = f"{self.base_url}/refb.merchant.v1.OrderService/ListOrders"
@@ -161,6 +161,10 @@ class RefurbishedClient:
             body = {
                 "pagination": {
                     "limit": limit
+                },
+                "sort": {
+                    "field": "CREATED_AT",
+                    "order": "DESC" if sort_desc else "ASC"
                 }
             }
             
@@ -168,7 +172,7 @@ class RefurbishedClient:
             if state:
                 body["state_filters"] = [state]
             
-            logger.info(f"Refurbed: POST {url} con body={body}")
+            logger.info(f"Refurbed: POST {url} con sort DESC")
             
             response = requests.post(url, headers=self.headers, json=body)
             

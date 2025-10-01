@@ -79,39 +79,50 @@ class BackMarketClient:
     def accept_order(self, order_id: str) -> bool:
         """Accetta un ordine su BackMarket aggiornando le orderlines allo stato 2"""
         try:
-            # Endpoint per aggiornare orderlines
-            url = f"{self.base_url}/ws/orders/{order_id}"
+            # Prima recupera i dettagli dell'ordine per ottenere gli SKU
+            order_url = f"{self.base_url}/ws/orders/{order_id}"
+            order_response = requests.get(order_url, headers=self.headers)
             
-            # Per accettare: aggiorna le orderlines allo stato 2 (Accepted)
-            # Stati Orderline:
-            # 1 = Paid (da accettare), 2 = Accepted, 3 = Shipped
-            data = {
-                "order_id": int(order_id),
-                "new_state": 2  # Accetta tutte le orderlines
-            }
+            if order_response.status_code != 200:
+                logger.error(f"Impossibile recuperare dettagli ordine {order_id}")
+                return False
             
-            response = requests.post(url, headers=self.headers, json=data)
+            order_data = order_response.json()
+            orderlines = order_data.get('orderlines', [])
             
-            if response.status_code == 200:
-                logger.info(f"Ordine {order_id} accettato - orderlines aggiornate allo stato 2")
-                return True
-            elif response.status_code == 400:
-                error_text = response.text
-                logger.warning(f"Errore 400 accettazione ordine {order_id}: {error_text}")
+            if not orderlines:
+                logger.error(f"Nessuna orderline trovata per ordine {order_id}")
+                return False
+            
+            # Accetta ogni orderline specificando il suo SKU
+            success_count = 0
+            for orderline in orderlines:
+                sku = orderline.get('listing') or orderline.get('serial_number')
                 
-                # Se orderlines già nello stato 2, considera successo
-                if "state" in error_text.lower() or "already" in error_text.lower():
-                    logger.info(f"Orderlines già nello stato corretto")
-                    return True
-                return False
-            elif response.status_code == 403:
-                logger.error(f"Accesso negato (403) - verifica che il token API abbia permessi di scrittura")
-                return False
-            elif response.status_code == 404:
-                logger.error(f"Ordine {order_id} non trovato (404)")
-                return False
+                if not sku:
+                    logger.warning(f"SKU mancante per orderline in ordine {order_id}")
+                    continue
+                
+                # Aggiorna orderline con SKU specifico
+                update_url = f"{self.base_url}/ws/orders/{order_id}"
+                data = {
+                    "order_id": int(order_id),
+                    "new_state": 2,  # Accepted
+                    "sku": sku
+                }
+                
+                response = requests.post(update_url, headers=self.headers, json=data)
+                
+                if response.status_code == 200:
+                    logger.info(f"Orderline {sku} accettata per ordine {order_id}")
+                    success_count += 1
+                else:
+                    logger.error(f"Errore accettazione orderline {sku}: {response.status_code} - {response.text}")
+            
+            if success_count > 0:
+                logger.info(f"Ordine {order_id} accettato: {success_count}/{len(orderlines)} orderlines")
+                return True
             else:
-                logger.error(f"Errore accettazione: {response.status_code} - {response.text}")
                 return False
                 
         except requests.exceptions.RequestException as e:
@@ -650,7 +661,8 @@ def dashboard():
                         <th>Numero Ordine</th>
                         <th>Canale</th>
                         <th>Cliente</th>
-                        <th>Email</th>
+                        <th>Prodotto</th>
+                        <th>SKU / Seriale</th>
                         <th>Data</th>
                         <th>Importo</th>
                         <th>Stato</th>
@@ -705,6 +717,21 @@ def dashboard():
                 tbody.innerHTML = orders.map(order => {
                     const badgeClass = 'badge-' + order.source.toLowerCase().replace('c', 'c');
                     const date = new Date(order.date).toLocaleDateString('it-IT');
+                    
+                    // Estrai info prodotti
+                    let productInfo = 'N/A';
+                    let skuInfo = 'N/A';
+                    
+                    if (order.items && order.items.length > 0) {
+                        const item = order.items[0];
+                        productInfo = item.name || 'N/A';
+                        skuInfo = item.sku || 'N/A';
+                        
+                        // Se ci sono più prodotti, mostra il conteggio
+                        if (order.items.length > 1) {
+                            productInfo += ` (+${order.items.length - 1})`;
+                        }
+                    }
                     
                     // Determina i pulsanti da mostrare in base allo stato
                     let actionButtons = '';
@@ -766,7 +793,8 @@ def dashboard():
                             <td><strong>${order.order_id}</strong></td>
                             <td><span class="badge ${badgeClass}">${order.source}</span></td>
                             <td>${order.customer_name}</td>
-                            <td>${order.customer_email}</td>
+                            <td>${productInfo}</td>
+                            <td><code>${skuInfo}</code></td>
                             <td>${date}</td>
                             <td><strong>€${order.total.toFixed(2)}</strong></td>
                             <td>${statusBadge}</td>

@@ -309,11 +309,14 @@ def get_pending_orders() -> List[Dict]:
     for status in ['waiting_acceptance', 'accepted', 'to_ship']:
         orders = bm_client.get_orders(status=status)
         for order in orders:
-            all_orders.append(normalize_order(order, 'backmarket'))
-            bm_count += 1
-        logger.info(f"BackMarket status '{status}': {len(orders)} ordini")
+            # Filtra solo ordini NON già spediti (state != 9)
+            order_state = order.get('state', 0)
+            if order_state != 9:  # 9 = Shipped
+                all_orders.append(normalize_order(order, 'backmarket'))
+                bm_count += 1
+        logger.info(f"BackMarket status '{status}': {len(orders)} ordini totali")
     
-    logger.info(f"BackMarket totale: {bm_count} ordini non ancora spediti")
+    logger.info(f"BackMarket totale NON spediti: {bm_count} ordini")
     
     # Refurbed - solo ordini non ancora spediti
     rf_client = RefurbishedClient(REFURBED_TOKEN)
@@ -661,6 +664,34 @@ def dashboard():
                     const badgeClass = 'badge-' + order.source.toLowerCase().replace('c', 'c');
                     const date = new Date(order.date).toLocaleDateString('it-IT');
                     
+                    // Determina il pulsante da mostrare in base allo stato
+                    let actionButton = '';
+                    let statusBadge = '';
+                    
+                    if (order.source === 'BackMarket') {
+                        // Per BackMarket mostra pulsante solo se waiting_acceptance (stato 1)
+                        // Altri stati: 2=accepted, 3=to_ship
+                        const stateNum = order.status;
+                        
+                        if (stateNum === 1 || order.status === 'waiting_acceptance') {
+                            actionButton = `<button class="btn btn-success btn-small" onclick="acceptOrder('${order.order_id}', '${order.source}')">✓ Accetta e Crea DDT</button>`;
+                            statusBadge = '<span class="badge badge-pending">Da Accettare</span>';
+                        } else if (stateNum === 2 || order.status === 'accepted') {
+                            actionButton = `<button class="btn btn-success btn-small" onclick="acceptOrder('${order.order_id}', '${order.source}')">📄 Crea DDT</button>`;
+                            statusBadge = '<span class="badge badge-accepted">Accettato</span>';
+                        } else if (stateNum === 3 || order.status === 'to_ship') {
+                            actionButton = `<button class="btn btn-success btn-small" onclick="acceptOrder('${order.order_id}', '${order.source}')">📄 Crea DDT</button>`;
+                            statusBadge = '<span class="badge badge-accepted">Da Spedire</span>';
+                        } else {
+                            actionButton = `<button class="btn btn-success btn-small" onclick="acceptOrder('${order.order_id}', '${order.source}')">✓ Accetta e Crea DDT</button>`;
+                            statusBadge = '<span class="badge badge-pending">Pendente</span>';
+                        }
+                    } else {
+                        // Per Refurbed e CDiscount mostra sempre il pulsante
+                        actionButton = `<button class="btn btn-success btn-small" onclick="acceptOrder('${order.order_id}', '${order.source}')">✓ Accetta e Crea DDT</button>`;
+                        statusBadge = '<span class="badge badge-pending">Pendente</span>';
+                    }
+                    
                     return `
                         <tr>
                             <td><strong>${order.order_id}</strong></td>
@@ -669,12 +700,8 @@ def dashboard():
                             <td>${order.customer_email}</td>
                             <td>${date}</td>
                             <td><strong>€${order.total.toFixed(2)}</strong></td>
-                            <td><span class="badge badge-pending">Pendente</span></td>
-                            <td>
-                                <button class="btn btn-success btn-small" onclick="acceptOrder('${order.order_id}', '${order.source}')">
-                                    ✓ Accetta e Crea DDT
-                                </button>
-                            </td>
+                            <td>${statusBadge}</td>
+                            <td>${actionButton}</td>
                         </tr>
                     `;
                 }).join('');

@@ -164,10 +164,11 @@ class RefurbishedClient:
                 }
             }
             
+            # Aggiungi state_filters SOLO se specificato (non se None)
             if state:
                 body["state_filters"] = [state]
             
-            logger.info(f"Refurbed: POST {url} con state_filters={state}")
+            logger.info(f"Refurbed: POST {url} con body={body}")
             
             response = requests.post(url, headers=self.headers, json=body)
             
@@ -405,8 +406,8 @@ def get_pending_orders() -> List[Dict]:
     # Refurbed - recupera TUTTI gli ordini senza filtro stato per debug
     rf_client = RefurbishedClient(REFURBED_TOKEN)
     
-    # Chiamata SENZA filtro stato per vedere tutti gli ordini
-    rf_orders_all = rf_client.get_orders(state=None, limit=200)
+    # Chiamata SENZA filtro stato (limit max 100)
+    rf_orders_all = rf_client.get_orders(state=None, limit=100)
     
     logger.info(f"Refurbed: recuperati {len(rf_orders_all)} ordini TOTALI senza filtri")
     

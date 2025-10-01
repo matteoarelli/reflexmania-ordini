@@ -282,6 +282,7 @@ def normalize_order(order: Dict, source: str) -> Dict:
             'country': shipping.get('country', ''),
             'items': items,
             'total': float(order.get('price', 0)),
+            'delivery_note': order.get('delivery_note', ''),  # URL packing slip
             'accepted': False
         }
     
@@ -742,40 +743,54 @@ def dashboard():
                     if (order.source === 'BackMarket') {
                         const stateNum = order.status;
                         
+                        // Pulsante Packing Slip per BackMarket (se disponibile)
+                        let packingSlipBtn = '';
+                        if (order.delivery_note) {
+                            packingSlipBtn = `
+                                <a href="${order.delivery_note}" target="_blank" class="btn btn-primary btn-small" style="margin-right: 5px; background: #6c757d;">
+                                    📄 Packing Slip
+                                </a>
+                            `;
+                        }
+                        
                         if (stateNum === 1 || order.status === 'waiting_acceptance') {
-                            // Ordine da accettare - mostra entrambi i pulsanti
+                            // Ordine da accettare - mostra tutti i pulsanti
                             actionButtons = `
+                                ${packingSlipBtn}
                                 <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
-                                    ✓ Accetta Ordine
+                                    ✓ Accetta
                                 </button>
                                 <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
-                                    📄 Crea DDT
+                                    📋 Crea DDT
                                 </button>
                             `;
                             statusBadge = '<span class="badge badge-pending">Da Accettare</span>';
                         } else if (stateNum === 2 || order.status === 'accepted') {
-                            // Ordine già accettato - solo DDT
+                            // Ordine già accettato - packing slip + DDT
                             actionButtons = `
+                                ${packingSlipBtn}
                                 <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
-                                    📄 Crea DDT
+                                    📋 Crea DDT
                                 </button>
                             `;
                             statusBadge = '<span class="badge badge-accepted">Accettato</span>';
                         } else if (stateNum === 3 || order.status === 'to_ship') {
-                            // Pronto per spedizione - solo DDT
+                            // Pronto per spedizione - packing slip + DDT
                             actionButtons = `
+                                ${packingSlipBtn}
                                 <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
-                                    📄 Crea DDT
+                                    📋 Crea DDT
                                 </button>
                             `;
                             statusBadge = '<span class="badge badge-accepted">Da Spedire</span>';
                         } else {
                             actionButtons = `
+                                ${packingSlipBtn}
                                 <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
-                                    ✓ Accetta Ordine
+                                    ✓ Accetta
                                 </button>
                                 <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
-                                    📄 Crea DDT
+                                    📋 Crea DDT
                                 </button>
                             `;
                             statusBadge = '<span class="badge badge-pending">Pendente</span>';

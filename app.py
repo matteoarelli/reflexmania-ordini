@@ -167,20 +167,18 @@ class RefurbishedClient:
             if state:
                 body["state_filters"] = [state]
             
-            logger.info(f"Refurbed: POST {url}")
-            logger.info(f"Refurbed: body {body}")
+            logger.info(f"Refurbed: POST {url} con state_filters={state}")
             
             response = requests.post(url, headers=self.headers, json=body)
             
             logger.info(f"Refurbed: status {response.status_code}")
-            logger.info(f"Refurbed: response preview: {response.text[:500]}")
             
             response.raise_for_status()
             
             data = response.json()
             orders = data.get('orders', [])
             
-            logger.info(f"Refurbed: recuperati {len(orders)} ordini")
+            logger.info(f"Refurbed: recuperati {len(orders)} ordini con stato {state}")
             return orders
             
         except requests.exceptions.HTTPError as e:
@@ -404,18 +402,23 @@ def get_pending_orders() -> List[Dict]:
     
     logger.info(f"BackMarket totale NON spediti (deduplicati): {bm_count} ordini")
     
-    # Refurbed
+    # Refurbed - recupera ordini NEW e ACCEPTED separatamente
     rf_client = RefurbishedClient(REFURBED_TOKEN)
-    rf_orders = rf_client.get_orders()
-    rf_count = 0
     
-    for order in rf_orders:
-        order_state = order.get('state', 'NEW')
-        if order_state not in ['SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED']:
-            all_orders.append(normalize_order(order, 'refurbed'))
-            rf_count += 1
+    # Chiamata separata per ordini NEW
+    rf_orders_new = rf_client.get_orders(state='NEW', limit=100)
     
-    logger.info(f"Refurbed: {rf_count} ordini da processare su {len(rf_orders)} totali")
+    # Chiamata separata per ordini ACCEPTED
+    rf_orders_accepted = rf_client.get_orders(state='ACCEPTED', limit=100)
+    
+    # Combina i risultati
+    all_rf_orders = rf_orders_new + rf_orders_accepted
+    rf_count = len(all_rf_orders)
+    
+    for order in all_rf_orders:
+        all_orders.append(normalize_order(order, 'refurbed'))
+    
+    logger.info(f"Refurbed: {rf_count} ordini pendenti (NEW: {len(rf_orders_new)}, ACCEPTED: {len(rf_orders_accepted)})")
     
     # CDiscount
     oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)

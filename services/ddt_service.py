@@ -50,34 +50,13 @@ def get_or_create_cliente(order: Dict, db_config: Dict) -> int:
             logger.info(f"✓ Cliente trovato per nome: ID {cliente_id}")
         else:
             logger.info(f"✗ Nessun cliente trovato, procedo con creazione nuovo cliente")
-            # Crea nuovo cliente - USA TUTTI I CAMPI RICHIESTI
-            # Basato sull'esempio: 109 colonne totali
+            
+            # Crea nuovo cliente - INSERISCE SOLO CAMPI NECESSARI
             insert_query = """
             INSERT INTO clie_forn 
-            (piva, cod_fiscale, rea, ragione_sociale, pfis, nome, cognome, 
-             indirizzo, cap, localita, provincia, telefono, cellulare, email, 
-             codice_sdi, pec, paese, tipo_clifor, 
-             sconto, sconto2, iban, banca, 
-             cod_pagamento, gg_scadenza, note, fido, iva_inclusa, 
-             split_payment, cod_esenzione, listino, codice_agente, 
-             sito_web, escludi_magg, escludi_liq_iva, id_banca_appoggio,
-             is_trasportatore, nascondi_scadenze, sconto3, esenzione_ritenuta,
-             id_ritenuta, percentuale_ritenuta, categorie, data_nascita,
-             luogo_nascita, sesso, acconto, attivo, bollo, ragsoc_agente,
-             contributo_cassa, perc_contributo_cassa, imponibile_ritenuta,
-             natura_iva, id_causale_ritenuta, tipo_cassa, giorni_fissi_pagamento,
-             split_payment_detraibile, giorni_fine_mese, prezzo_trasporto,
-             listino2, listino3, listino_tipo, enasarco, priorita, data_ultimo_doc,
-             castelletto, sconto4, comune_nascita, nazione_nascita, cod_ateco,
-             aliquota_inps, num_iscrizione_inps, sede_inps, matricola_inps,
-             codice_posizione_inail, num_pat_inail, numero_iscrizione_albo)
-            VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s
-            )
+            (ragione_sociale, nome, cognome, indirizzo, cap, localita, 
+             telefono, cellulare, email, paese, pfis, attivo)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             
             paese = order['country'][:2].upper() if order['country'] else 'IT'
@@ -94,83 +73,18 @@ def get_or_create_cliente(order: Dict, db_config: Dict) -> int:
             logger.info(f"   - paese: {paese}")
             
             values = (
-                '',  # piva
-                '',  # cod_fiscale
-                '',  # rea
                 order['customer_name'][:100],  # ragione_sociale
-                'N',  # pfis
                 nome[:50],  # nome
                 cognome[:50],  # cognome
                 order['address'][:100] if order['address'] else '',  # indirizzo
                 order['postal_code'][:10] if order['postal_code'] else '',  # cap
                 order['city'][:50] if order['city'] else '',  # localita
-                '',  # provincia
                 order['customer_phone'][:20] if order['customer_phone'] else '',  # telefono
                 order['customer_phone'][:20] if order['customer_phone'] else '',  # cellulare
                 order['customer_email'][:100] if order['customer_email'] else '',  # email
-                '',  # codice_sdi
-                '',  # pec
                 paese,  # paese
-                'C',  # tipo_clifor (C=Cliente)
-                0.0,  # sconto
-                0.0,  # sconto2
-                '',  # iban
-                '',  # banca
-                '',  # cod_pagamento
-                0,  # gg_scadenza
-                '',  # note
-                0.0,  # fido
-                'N',  # iva_inclusa
-                'N',  # split_payment
-                '',  # cod_esenzione
-                1,  # listino
-                0,  # codice_agente
-                '',  # sito_web
-                'N',  # escludi_magg
-                'N',  # escludi_liq_iva
-                0,  # id_banca_appoggio
-                'N',  # is_trasportatore
-                'N',  # nascondi_scadenze
-                0.0,  # sconto3
-                'N',  # esenzione_ritenuta
-                None,  # id_ritenuta
-                0.0,  # percentuale_ritenuta
-                '',  # categorie
-                None,  # data_nascita
-                '',  # luogo_nascita
-                '',  # sesso
-                0.0,  # acconto
-                'S',  # attivo
-                'N',  # bollo
-                '',  # ragsoc_agente
-                'N',  # contributo_cassa
-                0.0,  # perc_contributo_cassa
-                'N',  # imponibile_ritenuta
-                '',  # natura_iva
-                None,  # id_causale_ritenuta
-                '',  # tipo_cassa
-                '',  # giorni_fissi_pagamento
-                'N',  # split_payment_detraibile
-                0,  # giorni_fine_mese
-                0.0,  # prezzo_trasporto
-                0,  # listino2
-                0,  # listino3
-                '',  # listino_tipo
-                'N',  # enasarco
-                0,  # priorita
-                None,  # data_ultimo_doc
-                'N',  # castelletto
-                0.0,  # sconto4
-                '',  # comune_nascita
-                '',  # nazione_nascita
-                '',  # cod_ateco
-                0.0,  # aliquota_inps
-                '',  # num_iscrizione_inps
-                '',  # sede_inps
-                '',  # matricola_inps
-                '',  # codice_posizione_inail
-                '',  # num_pat_inail
-                ''   # numero_iscrizione_albo
+                'N',  # pfis (persona fisica = N)
+                'S'   # attivo = S
             )
             
             cursor.execute(insert_query, values)

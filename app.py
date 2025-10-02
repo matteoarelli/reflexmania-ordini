@@ -172,7 +172,6 @@ class RefurbishedClient:
                 }
             }
             
-            # Aggiungi state_filters SOLO se specificato (non se None)
             if state:
                 body["state_filters"] = [state]
             
@@ -208,7 +207,6 @@ class RefurbishedClient:
         try:
             url = f"{self.base_url}/refb.merchant.v1.OrderItemService/BatchUpdateOrderItemsState"
             
-            # Prima recupera gli order_items dell'ordine
             list_url = f"{self.base_url}/refb.merchant.v1.OrderItemService/ListOrderItemsByOrder"
             list_body = {"order_id": order_id}
             
@@ -225,7 +223,6 @@ class RefurbishedClient:
                 logger.error(f"Nessun order_item trovato per ordine Refurbed {order_id}")
                 return False
             
-            # Aggiorna ogni order_item a stato ACCEPTED
             updates = []
             for item in order_items:
                 item_id = item.get('id')
@@ -239,7 +236,6 @@ class RefurbishedClient:
                 logger.error(f"Nessun order_item valido da aggiornare per ordine {order_id}")
                 return False
             
-            # Batch update degli order items
             update_body = {"updates": updates}
             response = requests.post(url, headers=self.headers, json=update_body)
             
@@ -381,11 +377,9 @@ def normalize_order(order: Dict, source: str) -> Dict:
         shipping = order.get('shipping_address', {})
         items = []
         
-        # Parsing items - può essere in 'items' o 'order_items'
         order_items = order.get('items', order.get('order_items', []))
         
         for item in order_items:
-            # Il nome prodotto può essere in diversi campi
             item_name = (
                 item.get('name') or 
                 item.get('title') or 
@@ -394,7 +388,6 @@ def normalize_order(order: Dict, source: str) -> Dict:
                 'N/A'
             )
             
-            # SKU può essere in offer_data o direttamente nell'item
             sku = item.get('sku', '')
             if not sku:
                 offer_data = item.get('offer_data', {})
@@ -406,7 +399,6 @@ def normalize_order(order: Dict, source: str) -> Dict:
                 'quantity': item.get('quantity', 1)
             })
         
-        # Data può essere in diversi campi
         order_date = (
             order.get('released_at') or 
             order.get('created_at') or 
@@ -470,7 +462,6 @@ def get_pending_orders() -> List[Dict]:
     all_orders = []
     seen_order_ids = set()
     
-    # BackMarket
     bm_client = BackMarketClient(BACKMARKET_TOKEN)
     bm_count = 0
     
@@ -491,22 +482,17 @@ def get_pending_orders() -> List[Dict]:
     
     logger.info(f"BackMarket totale NON spediti (deduplicati): {bm_count} ordini")
     
-    # Refurbed - recupera TUTTI gli ordini con sorting per data decrescente
     rf_client = RefurbishedClient(REFURBED_TOKEN)
-    
-    # Chiamata con sort DESC per ottenere ordini più recenti
     rf_orders_all = rf_client.get_orders(state=None, limit=100, sort_desc=True)
     
     logger.info(f"Refurbed: recuperati {len(rf_orders_all)} ordini TOTALI con sort DESC")
     
-    # Log primo ordine per debug campi
     if len(rf_orders_all) > 0:
         first_order = rf_orders_all[0]
         logger.info(f"DEBUG Refurbed order {first_order.get('id')}: state={first_order.get('state')}")
         logger.info(f"DEBUG Campi data disponibili: released_at={first_order.get('released_at')}, created_at={first_order.get('created_at')}")
         logger.info(f"DEBUG Items structure: {first_order.get('items', [])[:1] if first_order.get('items') else 'empty'}")
     
-    # Filtra solo ordini NON spediti/cancellati/rifiutati
     rf_pending = []
     for order in rf_orders_all:
         order_state = order.get('state', 'NEW')
@@ -517,7 +503,6 @@ def get_pending_orders() -> List[Dict]:
     rf_count = len(rf_pending)
     logger.info(f"Refurbed: {rf_count} ordini pendenti su {len(rf_orders_all)} totali")
     
-    # CDiscount
     oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)
     oct_orders = oct_client.get_orders()
     cd_count = 0
@@ -586,12 +571,10 @@ def get_or_create_cliente(order: Dict) -> int:
         conn = mysql.connector.connect(**INVOICEX_CONFIG)
         cursor = conn.cursor()
         
-        # Estrai nome e cognome
         name_parts = order['customer_name'].split(maxsplit=1)
         nome = name_parts[0] if name_parts else 'Cliente'
         cognome = name_parts[1] if len(name_parts) > 1 else 'Marketplace'
         
-        # Cerca cliente esistente per email o nome completo
         if order['customer_email']:
             cursor.execute(
                 "SELECT id FROM clie_forn WHERE email = %s LIMIT 1",
@@ -609,7 +592,6 @@ def get_or_create_cliente(order: Dict) -> int:
             cliente_id = result[0]
             logger.info(f"Cliente esistente trovato: ID {cliente_id}")
         else:
-            # Crea nuovo cliente
             insert_query = """
             INSERT INTO clie_forn 
             (ragione_sociale, nome, cognome, indirizzo, cap, localita, 
@@ -617,22 +599,21 @@ def get_or_create_cliente(order: Dict) -> int:
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             
-            # Estrai provincia dai primi 2 caratteri del paese o lascia vuoto
             provincia = order['country'][:2] if order['country'] else ''
             
             values = (
-                order['customer_name'],  # ragione_sociale
-                nome,  # nome
-                cognome,  # cognome
-                order['address'][:50] if order['address'] else '',  # indirizzo (max 50 char)
-                order['postal_code'][:10] if order['postal_code'] else '',  # cap (max 10 char)
-                order['city'][:30] if order['city'] else '',  # localita (max 30 char)
-                provincia,  # provincia
-                order['country'][:2] if order['country'] else 'IT',  # paese (2 char)
-                order['customer_phone'][:20] if order['customer_phone'] else '',  # telefono (max 20 char)
-                order['customer_phone'][:20] if order['customer_phone'] else '',  # cellulare (max 20 char)
-                order['customer_email'][:100] if order['customer_email'] else '',  # email (max 100 char)
-                'C'  # tipo_clifor: C = Cliente
+                order['customer_name'],
+                nome,
+                cognome,
+                order['address'][:50] if order['address'] else '',
+                order['postal_code'][:10] if order['postal_code'] else '',
+                order['city'][:30] if order['city'] else '',
+                provincia,
+                order['country'][:2] if order['country'] else 'IT',
+                order['customer_phone'][:20] if order['customer_phone'] else '',
+                order['customer_phone'][:20] if order['customer_phone'] else '',
+                order['customer_email'][:100] if order['customer_email'] else '',
+                'C'
             )
             
             cursor.execute(insert_query, values)
@@ -646,7 +627,7 @@ def get_or_create_cliente(order: Dict) -> int:
         
     except mysql.connector.Error as e:
         logger.error(f"Errore MySQL get_or_create_cliente: {e}")
-        return 1  # Fallback a cliente generico
+        return 1
     except Exception as e:
         logger.error(f"Errore generico get_or_create_cliente: {e}")
         return 1
@@ -658,7 +639,6 @@ def create_ddt_invoicex(order: Dict) -> Optional[str]:
         conn = mysql.connector.connect(**INVOICEX_CONFIG)
         cursor = conn.cursor()
         
-        # Recupera il prossimo numero DDT progressivo per l'anno corrente
         query_num = """
         SELECT MAX(numero) as max_num 
         FROM test_ddt 
@@ -669,10 +649,8 @@ def create_ddt_invoicex(order: Dict) -> Optional[str]:
         max_num = result[0] if result[0] else 0
         ddt_number = max_num + 1
         
-        # Cerca o crea cliente
         cliente_id = get_or_create_cliente(order)
         
-        # Inserisci testata DDT
         query_header = """
         INSERT INTO test_ddt 
         (serie, numero, anno, cliente, data, pagamento, note, 
@@ -684,34 +662,33 @@ def create_ddt_invoicex(order: Dict) -> Optional[str]:
         """
         
         values_header = (
-            '',  # serie vuota
+            '',
             ddt_number,
             datetime.now().year,
             cliente_id,
             datetime.now().date(),
-            'MARKETPLACE',  # tipo pagamento
+            'MARKETPLACE',
             f"Ordine {order['source']} #{order['order_id']}\nCliente: {order['customer_name']}\nEmail: {order['customer_email']}\nTelefono: {order['customer_phone']}\nIndirizzo: {order['address']}, {order['postal_code']} {order['city']} ({order['country']})",
-            float(order['total']),  # totale_imponibile
-            0.00,  # totale_iva (regime del margine)
-            float(order['total']),  # totale
-            0.00,  # sconto1
-            0.00,  # sconto2
-            0.00,  # sconto3
-            'P',  # stato: P = Pendente
-            1,  # codice_listino
-            datetime(1, 1, 1, 0, 0),  # stampato: data vuota
-            'N',  # prezzi_ivati
-            0.00,  # sconto
-            float(order['total']),  # totale_imponibile_pre_sconto
-            float(order['total']),  # totale_ivato_pre_sconto
-            0,  # deposito
-            0   # mail_inviata
+            float(order['total']),
+            0.00,
+            float(order['total']),
+            0.00,
+            0.00,
+            0.00,
+            'P',
+            1,
+            datetime(1, 1, 1, 0, 0),
+            'N',
+            0.00,
+            float(order['total']),
+            float(order['total']),
+            0,
+            0
         )
         
         cursor.execute(query_header, values_header)
         ddt_id = cursor.lastrowid
         
-        # Inserisci righe DDT
         query_lines = """
         INSERT INTO righ_ddt
         (id_padre, serie, numero, anno, riga, data, codice_articolo, descrizione,
@@ -726,29 +703,29 @@ def create_ddt_invoicex(order: Dict) -> Optional[str]:
             qta = float(item['quantity'])
             
             values_line = (
-                ddt_id,  # id_padre
-                '',  # serie
-                ddt_number,  # numero
-                datetime.now().year,  # anno
-                idx,  # riga
-                datetime.now().date(),  # data
-                item['sku'][:20],  # codice_articolo (max 20 char)
-                f"{item['name']}\nSKU: {item['sku']}",  # descrizione
-                '',  # um (unità misura)
-                qta,  # quantita
-                prezzo_unitario,  # prezzo
-                '36',  # iva (codice regime del margine)
-                0.00,  # sconto1
-                0.00,  # sconto2
-                'P',  # stato
-                'N',  # is_descrizione
-                prezzo_unitario,  # prezzo_ivato
-                prezzo_unitario * qta,  # totale_ivato
-                prezzo_unitario * qta,  # totale_imponibile
-                prezzo_unitario,  # prezzo_netto_unitario
-                prezzo_unitario,  # prezzo_ivato_netto_unitario
-                prezzo_unitario * qta,  # prezzo_netto_totale
-                prezzo_unitario * qta   # prezzo_ivato_netto_totale
+                ddt_id,
+                '',
+                ddt_number,
+                datetime.now().year,
+                idx,
+                datetime.now().date(),
+                item['sku'][:20],
+                f"{item['name']}\nSKU: {item['sku']}",
+                '',
+                qta,
+                prezzo_unitario,
+                '36',
+                0.00,
+                0.00,
+                'P',
+                'N',
+                prezzo_unitario,
+                prezzo_unitario * qta,
+                prezzo_unitario * qta,
+                prezzo_unitario,
+                prezzo_unitario,
+                prezzo_unitario * qta,
+                prezzo_unitario * qta
             )
             cursor.execute(query_lines, values_line)
         
@@ -1301,105 +1278,6 @@ def api_accept_order_only():
             if not rf_client.accept_order(order_id):
                 return jsonify({'success': False, 'error': 'Errore accettazione ordine'}), 500
         
-        # Disabilita prodotti su tutti i canali
-        disable_results = {}
-        for item in order['items']:
-            result = disable_product_on_channels(item['sku'], source)
-            disable_results[item['sku']] = result
-        
-        # Crea DDT su InvoiceX
-        ddt_number = create_ddt_invoicex(order)
-        if not ddt_number:
-            return jsonify({'success': False, 'error': 'Errore creazione DDT'}), 500
-        
-        return jsonify({
-            'success': True,
-            'ddt_number': ddt_number,
-            'order_id': order_id,
-            'message': 'Ordine accettato e DDT creato'
-        })
-        
-    except Exception as e:
-        logger.error(f"Errore accept_order: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/packlink_csv')
-def api_packlink_csv():
-    """API: genera CSV Packlink per ordini accettati"""
-    try:
-        orders = get_pending_orders()
-        
-        rows = []
-        for order in orders:
-            name_parts = order['customer_name'].split()
-            first_name = name_parts[0] if name_parts else ''
-            last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
-            
-            row = {
-                'Numero di ordine': f"{order['source']}-{order['order_id']}",
-                'nome mittente': 'ReflexMania',
-                'Cognome mittente': 'SRL',
-                'Azienda mittente': 'ReflexMania SRL',
-                'Indirizzo Di Spedizione 1': 'Via primo maggio 16',
-                'Indirizzo Di Spedizione 2': '',
-                'CAP Spedizione': '60131',
-                'citta Spedizione': 'Ancona',
-                'provincia di Spedizione': 'AN',
-                'Paese di spedizione': 'IT',
-                'Telefono spedizione': '0712916347',
-                'Email Spedizione': 'info@reflexmania.it',
-                'Nome destinatario': first_name,
-                'Cognome destinatario': last_name,
-                'Azienda destinatario': '',
-                'Indirizzo di consegna 1': order['address'],
-                'Indirizzo di consegna 2': '',
-                'CAP di consegna': order['postal_code'],
-                'citta di consegna': order['city'],
-                'provincia di consegna': '',
-                'Paese di consegna': order['country'],
-                'Telefono di consegna': order['customer_phone'],
-                'Email di consegna': order['customer_email'],
-                'assicurazione': 'NO',
-                'Titolo dell\'oggetto': order['items'][0]['name'] if order['items'] else 'Prodotto',
-                'Valore merce': str(int(order['total'])),
-                'Larghezza oggetto': '20',
-                'Altezza oggetto': '25',
-                'Lughezza oggetto': '29',
-                'Peso dell\'oggetto': '3'
-            }
-            rows.append(row)
-        
-        df = pd.DataFrame(rows)
-        
-        csv_buffer = BytesIO()
-        csv_string = df.to_csv(sep=';', index=False, encoding='utf-8')
-        csv_buffer.write(csv_string.encode('utf-8'))
-        csv_buffer.seek(0)
-        
-        filename = f"packlink_orders_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        
-        return send_file(
-            csv_buffer,
-            mimetype='text/csv',
-            as_attachment=True,
-            download_name=filename
-        )
-        
-    except Exception as e:
-        logger.error(f"Errore packlink CSV: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/health')
-def health():
-    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
-
-
-if __name__ == '__main__':
-    port = int(os.getenv('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False) False, 'error': 'Errore accettazione ordine'}), 500
-        
         return jsonify({
             'success': True,
             'order_id': order_id,
@@ -1460,7 +1338,6 @@ def api_accept_order():
         if not order:
             return jsonify({'success': False, 'error': 'Ordine non trovato'}), 404
         
-        # Accetta ordine sul marketplace
         if source == 'BackMarket':
             bm_client = BackMarketClient(BACKMARKET_TOKEN)
             if not bm_client.accept_order(order_id):
@@ -1470,13 +1347,11 @@ def api_accept_order():
             if not rf_client.accept_order(order_id):
                 return jsonify({'success': False, 'error': 'Errore accettazione ordine'}), 500
         
-        # Disabilita prodotti su tutti i canali
         disable_results = {}
         for item in order['items']:
             result = disable_product_on_channels(item['sku'], source)
             disable_results[item['sku']] = result
         
-        # Crea DDT su InvoiceX
         ddt_number = create_ddt_invoicex(order)
         if not ddt_number:
             return jsonify({'success': False, 'error': 'Errore creazione DDT'}), 500

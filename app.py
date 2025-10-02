@@ -235,7 +235,7 @@ def dashboard():
                 }
                 
                 tbody.innerHTML = orders.map(order => {
-                    const badgeClass = 'badge-' + order.source.toLowerCase().replace('c', 'c');
+                    const badgeClass = 'badge-' + order.source.toLowerCase();
                     const date = new Date(order.date).toLocaleDateString('it-IT');
                     
                     let productInfo = 'N/A';
@@ -259,241 +259,82 @@ def dashboard():
                         
                         let packingSlipBtn = '';
                         if (order.delivery_note) {
-                            packingSlipBtn = \`
-                                <a href="\${order.delivery_note}" target="_blank" class="btn btn-primary btn-small" style="margin-right: 5px; background: #6c757d;">
-                                    Packing Slip
-                                </a>
-                            \`;
+                            packingSlipBtn = `<a href="${order.delivery_note}" target="_blank" class="btn btn-primary btn-small" style="margin-right: 5px; background: #6c757d;">Packing Slip</a>`;
                         }
                         
                         if (stateNum === 1 || order.status === 'waiting_acceptance') {
-                            actionButtons = \`
-                                \${packingSlipBtn}
-                                <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('\${order.order_id}', '\${order.source}')" style="margin-right: 5px;">
-                                    Accetta
-                                </button>
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')">
-                                    Crea DDT
-                                </button>
-                            \`;
+                            actionButtons = `${packingSlipBtn}<button class="btn btn-primary btn-small" onclick="acceptOrderOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">Accetta</button><button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">Crea DDT</button>`;
                             statusBadge = '<span class="badge badge-pending">Da Accettare</span>';
                         } else if (stateNum === 2 || order.status === 'accepted') {
-                            actionButtons = \`
-                                \${packingSlipBtn}
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')" style="margin-right: 5px;">
-                                    Crea DDT
-                                </button>
-                                <button class="btn btn-primary btn-small" onclick="markAsShipped('\${order.order_id}', '\${order.source}')" style="background: #17a2b8;">
-                                    Spedito
-                                </button>
-                            \`;
+                            actionButtons = `${packingSlipBtn}<button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">Crea DDT</button><button class="btn btn-primary btn-small" onclick="markAsShipped('${order.order_id}', '${order.source}')" style="background: #17a2b8;">Spedito</button>`;
                             statusBadge = '<span class="badge badge-accepted">Accettato</span>';
                         } else if (stateNum === 3 || order.status === 'to_ship') {
-                            actionButtons = \`
-                                \${packingSlipBtn}
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')" style="margin-right: 5px;">
-                                    Crea DDT
-                                </button>
-                                <button class="btn btn-primary btn-small" onclick="markAsShipped('\${order.order_id}', '\${order.source}')" style="background: #17a2b8;">
-                                    Spedito
-                                </button>
-                            \`;
+                            actionButtons = `${packingSlipBtn}<button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">Crea DDT</button><button class="btn btn-primary btn-small" onclick="markAsShipped('${order.order_id}', '${order.source}')" style="background: #17a2b8;">Spedito</button>`;
                             statusBadge = '<span class="badge badge-accepted">Da Spedire</span>';
                         } else {
-                            actionButtons = \`
-                                \${packingSlipBtn}
-                                <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('\${order.order_id}', '\${order.source}')" style="margin-right: 5px;">
-                                    Accetta
-                                </button>
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')">
-                                    Crea DDT
-                                </button>
-                            \`;
+                            actionButtons = `${packingSlipBtn}<button class="btn btn-primary btn-small" onclick="acceptOrderOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">Accetta</button><button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">Crea DDT</button>`;
                             statusBadge = '<span class="badge badge-pending">Pendente</span>';
                         }
                     } else if (order.source === 'Refurbed') {
                         const orderState = order.status;
                         
                         if (orderState === 'NEW') {
-                            actionButtons = \`
-                                <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('\${order.order_id}', '\${order.source}')" style="margin-right: 5px;">
-                                    Accetta
-                                </button>
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')">
-                                    Crea DDT
-                                </button>
-                            \`;
+                            actionButtons = `<button class="btn btn-primary btn-small" onclick="acceptOrderOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">Accetta</button><button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">Crea DDT</button>`;
                             statusBadge = '<span class="badge badge-pending">Da Accettare</span>';
                         } else if (orderState === 'ACCEPTED') {
-                            actionButtons = \`
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')" style="margin-right: 5px;">
-                                    Crea DDT
-                                </button>
-                                <button class="btn btn-primary btn-small" onclick="markAsShipped('\${order.order_id}', '\${order.source}')" style="background: #17a2b8;">
-                                    Spedito
-                                </button>
-                            \`;
+                            actionButtons = `<button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">Crea DDT</button><button class="btn btn-primary btn-small" onclick="markAsShipped('${order.order_id}', '${order.source}')" style="background: #17a2b8;">Spedito</button>`;
                             statusBadge = '<span class="badge badge-accepted">Accettato</span>';
                         } else {
-                            actionButtons = \`
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')">
-                                    Crea DDT
-                                </button>
-                            \`;
+                            actionButtons = `<button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">Crea DDT</button>`;
                             statusBadge = '<span class="badge badge-pending">Pendente</span>';
                         }
                     } else {
-                        actionButtons = \`
-                            <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')">
-                                Crea DDT
-                            </button>
-                        \`;
+                        actionButtons = `<button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">Crea DDT</button>`;
                         statusBadge = '<span class="badge badge-pending">Pendente</span>';
                     }
                     
-                    return \`
-                        <tr>
-                            <td><strong>\${order.order_id}</strong></td>
-                            <td><span class="badge \${badgeClass}">\${order.source}</span></td>
-                            <td>\${order.customer_name}</td>
-                            <td>\${productInfo}</td>
-                            <td><code>\${skuInfo}</code></td>
-                            <td>\${date}</td>
-                            <td><strong>€\${order.total.toFixed(2)}</strong></td>
-                            <td>\${statusBadge}</td>
-                            <td>\${actionButtons}</td>
-                        </tr>
-                    \`;
+                    return `<tr><td><strong>${order.order_id}</strong></td><td><span class="badge ${badgeClass}">${order.source}</span></td><td>${order.customer_name}</td><td>${productInfo}</td><td><code>${skuInfo}</code></td><td>${date}</td><td><strong>€${order.total.toFixed(2)}</strong></td><td>${statusBadge}</td><td>${actionButtons}</td></tr>`;
                 }).join('');
             }
             
-            // Continua nella PARTE 2...
-        </script>
-    </body>
-    </html>
-    """
-    
-    return html
-"""
-PARTE 2 di app.py - API Routes
-Incolla questo DOPO la PARTE 1
-"""
-
-# Continua JavaScript dalla PARTE 1
-"""
             function markAsShipped(orderId, source) {
                 const trackingNumber = prompt(`Inserisci il numero di tracking per l'ordine ${orderId}:`);
-                
-                if (!trackingNumber || trackingNumber.trim() === '') {
-                    alert('Numero di tracking obbligatorio');
-                    return;
-                }
-                
+                if (!trackingNumber || trackingNumber.trim() === '') { alert('Numero di tracking obbligatorio'); return; }
                 const trackingUrl = prompt(`Inserisci l'URL di tracking (opzionale):`);
-                
-                if (!confirm(`Confermi la spedizione dell'ordine ${orderId}?\\n\\nTracking: ${trackingNumber}`)) {
-                    return;
-                }
-                
+                if (!confirm(`Confermi la spedizione dell'ordine ${orderId}?\\n\\nTracking: ${trackingNumber}`)) return;
                 document.getElementById('loading').style.display = 'block';
-                
-                fetch('/api/mark_shipped', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        order_id: orderId, 
-                        source: source,
-                        tracking_number: trackingNumber,
-                        tracking_url: trackingUrl || ''
-                    })
-                })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        alert(`Ordine ${orderId} marcato come spedito!\\n\\nTracking comunicato al marketplace.`);
-                        refreshOrders();
-                    } else {
-                        alert('Errore: ' + data.error);
-                        document.getElementById('loading').style.display = 'none';
-                    }
-                })
-                .catch(err => {
-                    alert('Errore di connessione');
-                    console.error(err);
-                    document.getElementById('loading').style.display = 'none';
-                });
+                fetch('/api/mark_shipped', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({order_id: orderId, source: source, tracking_number: trackingNumber, tracking_url: trackingUrl || ''}) })
+                .then(r => r.json()).then(data => { if (data.success) { alert(`Ordine ${orderId} marcato come spedito!\\n\\nTracking comunicato al marketplace.`); refreshOrders(); } else { alert('Errore: ' + data.error); document.getElementById('loading').style.display = 'none'; } })
+                .catch(err => { alert('Errore di connessione'); console.error(err); document.getElementById('loading').style.display = 'none'; });
             }
             
             function acceptOrderOnly(orderId, source) {
-                if (!confirm(`Confermi l'accettazione dell'ordine ${orderId} su ${source}?`)) {
-                    return;
-                }
-                
+                if (!confirm(`Confermi l'accettazione dell'ordine ${orderId} su ${source}?`)) return;
                 document.getElementById('loading').style.display = 'block';
-                
-                fetch('/api/accept_order_only', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({order_id: orderId, source: source})
-                })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        alert(`Ordine ${orderId} accettato con successo su ${source}!`);
-                        refreshOrders();
-                    } else {
-                        alert('Errore: ' + data.error);
-                        document.getElementById('loading').style.display = 'none';
-                    }
-                })
-                .catch(err => {
-                    alert('Errore di connessione');
-                    console.error(err);
-                    document.getElementById('loading').style.display = 'none';
-                });
+                fetch('/api/accept_order_only', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({order_id: orderId, source: source}) })
+                .then(r => r.json()).then(data => { if (data.success) { alert(`Ordine ${orderId} accettato con successo su ${source}!`); refreshOrders(); } else { alert('Errore: ' + data.error); document.getElementById('loading').style.display = 'none'; } })
+                .catch(err => { alert('Errore di connessione'); console.error(err); document.getElementById('loading').style.display = 'none'; });
             }
             
             function createDDTOnly(orderId, source) {
-                if (!confirm(`Confermi la creazione del DDT per l'ordine ${orderId}?\\n\\nQuesto:\\n- Disabiliterà i prodotti su tutti i canali\\n- Creerà il DDT su InvoiceX`)) {
-                    return;
-                }
-                
+                if (!confirm(`Confermi la creazione del DDT per l'ordine ${orderId}?\\n\\nQuesto:\\n- Disabiliterà i prodotti su tutti i canali\\n- Creerà il DDT su InvoiceX`)) return;
                 document.getElementById('loading').style.display = 'block';
-                
-                fetch('/api/create_ddt_only', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({order_id: orderId, source: source})
-                })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        alert(`DDT creato con successo!\\n\\nNumero DDT: ${data.ddt_number}\\n\\nL'ordine è ora pronto per la spedizione.`);
-                        refreshOrders();
-                    } else {
-                        alert('Errore: ' + data.error);
-                        document.getElementById('loading').style.display = 'none';
-                    }
-                })
-                .catch(err => {
-                    alert('Errore di connessione');
-                    console.error(err);
-                    document.getElementById('loading').style.display = 'none';
-                });
+                fetch('/api/create_ddt_only', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({order_id: orderId, source: source}) })
+                .then(r => r.json()).then(data => { if (data.success) { alert(`DDT creato con successo!\\n\\nNumero DDT: ${data.ddt_number}\\n\\nL'ordine è ora pronto per la spedizione.`); refreshOrders(); } else { alert('Errore: ' + data.error); document.getElementById('loading').style.display = 'none'; } })
+                .catch(err => { alert('Errore di connessione'); console.error(err); document.getElementById('loading').style.display = 'none'; });
             }
             
-            function downloadCSV() {
-                window.location.href = '/api/packlink_csv';
-            }
+            function downloadCSV() { window.location.href = '/api/packlink_csv'; }
             
             refreshOrders();
             setInterval(refreshOrders, 120000);
         </script>
     </body>
     </html>
-"""
+    """
+    
+    return html
 
-# ==================== API ROUTES ====================
 
 @app.route('/api/orders')
 def api_orders():
@@ -575,12 +416,10 @@ def api_create_ddt_only():
         if not order:
             return jsonify({'success': False, 'error': 'Ordine non trovato'}), 404
         
-        # Disabilita prodotti su tutti i canali
         for item in order['items']:
             listing_id = item.get('listing_id', '')
             disable_product_on_channels(item['sku'], listing_id, bm_client, rf_client, oct_client)
         
-        # Crea DDT
         ddt_number = create_ddt_invoicex(order, INVOICEX_CONFIG)
         if not ddt_number:
             return jsonify({'success': False, 'error': 'Errore creazione DDT'}), 500

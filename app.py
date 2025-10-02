@@ -323,19 +323,45 @@ def normalize_order(order: Dict, source: str) -> Dict:
         shipping = order.get('shipping_address', {})
         items = []
         
-        for item in order.get('items', []):
-            offer_data = item.get('offer_data', {})
+        # Parsing items - può essere in 'items' o 'order_items'
+        order_items = order.get('items', order.get('order_items', []))
+        
+        for item in order_items:
+            # Il nome prodotto può essere in diversi campi
+            item_name = (
+                item.get('name') or 
+                item.get('title') or 
+                item.get('product_name') or
+                item.get('instance_name') or
+                'N/A'
+            )
+            
+            # SKU può essere in offer_data o direttamente nell'item
+            sku = item.get('sku', '')
+            if not sku:
+                offer_data = item.get('offer_data', {})
+                sku = offer_data.get('sku', item.get('id', ''))
+            
             items.append({
-                'sku': offer_data.get('sku', item.get('id', '')),
-                'name': offer_data.get('title', 'N/A'),
-                'quantity': 1
+                'sku': sku,
+                'name': item_name,
+                'quantity': item.get('quantity', 1)
             })
+        
+        # Data può essere in diversi campi
+        order_date = (
+            order.get('released_at') or 
+            order.get('created_at') or 
+            order.get('order_date') or 
+            order.get('date') or
+            ''
+        )
         
         return {
             'order_id': str(order.get('id', '')),
             'source': 'Refurbed',
             'status': order.get('state', 'NEW'),
-            'date': order.get('created_at', ''),
+            'date': order_date,
             'customer_name': f"{shipping.get('first_name', '')} {shipping.get('last_name', '')}".strip(),
             'customer_email': order.get('email', ''),
             'customer_phone': shipping.get('phone', ''),
@@ -407,17 +433,20 @@ def get_pending_orders() -> List[Dict]:
     
     logger.info(f"BackMarket totale NON spediti (deduplicati): {bm_count} ordini")
     
-    # Refurbed - recupera TUTTI gli ordini senza filtro stato per debug
+    # Refurbed - recupera TUTTI gli ordini con sorting per data decrescente
     rf_client = RefurbishedClient(REFURBED_TOKEN)
     
-    # Chiamata SENZA filtro stato (limit max 100)
-    rf_orders_all = rf_client.get_orders(state=None, limit=100)
+    # Chiamata con sort DESC per ottenere ordini più recenti
+    rf_orders_all = rf_client.get_orders(state=None, limit=100, sort_desc=True)
     
-    logger.info(f"Refurbed: recuperati {len(rf_orders_all)} ordini TOTALI senza filtri")
+    logger.info(f"Refurbed: recuperati {len(rf_orders_all)} ordini TOTALI con sort DESC")
     
-    # Log primi 5 ordini per debug
-    for i, order in enumerate(rf_orders_all[:5]):
-        logger.info(f"DEBUG Refurbed order {order.get('id')}: state={order.get('state')}, created_at={order.get('created_at')}")
+    # Log primo ordine per debug campi
+    if len(rf_orders_all) > 0:
+        first_order = rf_orders_all[0]
+        logger.info(f"DEBUG Refurbed order {first_order.get('id')}: state={first_order.get('state')}")
+        logger.info(f"DEBUG Campi data disponibili: released_at={first_order.get('released_at')}, created_at={first_order.get('created_at')}")
+        logger.info(f"DEBUG Items structure: {first_order.get('items', [])[:1] if first_order.get('items') else 'empty'}")
     
     # Filtra solo ordini NON spediti/cancellati
     rf_pending = []

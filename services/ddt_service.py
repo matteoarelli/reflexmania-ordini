@@ -51,12 +51,12 @@ def get_or_create_cliente(order: Dict, db_config: Dict) -> int:
         else:
             logger.info(f"✗ Nessun cliente trovato, procedo con creazione nuovo cliente")
             
-            # Crea nuovo cliente - INSERISCE SOLO CAMPI NECESSARI
+            # Crea nuovo cliente - SOLO CAMPI ESISTENTI
             insert_query = """
             INSERT INTO clie_forn 
             (ragione_sociale, nome, cognome, indirizzo, cap, localita, 
-             telefono, cellulare, email, paese, pfis, attivo)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             telefono, cellulare, email, paese)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             
             paese = order['country'][:2].upper() if order['country'] else 'IT'
@@ -82,9 +82,7 @@ def get_or_create_cliente(order: Dict, db_config: Dict) -> int:
                 order['customer_phone'][:20] if order['customer_phone'] else '',  # telefono
                 order['customer_phone'][:20] if order['customer_phone'] else '',  # cellulare
                 order['customer_email'][:100] if order['customer_email'] else '',  # email
-                paese,  # paese
-                'N',  # pfis (persona fisica = N)
-                'S'   # attivo = S
+                paese  # paese
             )
             
             cursor.execute(insert_query, values)

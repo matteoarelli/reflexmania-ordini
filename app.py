@@ -199,7 +199,56 @@ class RefurbishedClient:
             logger.error(f"Errore Refurbed: {e}")
             return []
     
-    def disable_offer(self, sku: str) -> bool:
+    def accept_order(self, order_id: str) -> bool:
+        """Accetta un ordine su Refurbed aggiornando lo stato a ACCEPTED"""
+        try:
+            url = f"{self.base_url}/refb.merchant.v1.OrderItemService/BatchUpdateOrderItemsState"
+            
+            # Prima recupera gli order_items dell'ordine
+            list_url = f"{self.base_url}/refb.merchant.v1.OrderItemService/ListOrderItemsByOrder"
+            list_body = {"order_id": order_id}
+            
+            list_response = requests.post(list_url, headers=self.headers, json=list_body)
+            
+            if list_response.status_code != 200:
+                logger.error(f"Impossibile recuperare order items per ordine Refurbed {order_id}")
+                return False
+            
+            list_data = list_response.json()
+            order_items = list_data.get('order_items', [])
+            
+            if not order_items:
+                logger.error(f"Nessun order_item trovato per ordine Refurbed {order_id}")
+                return False
+            
+            # Aggiorna ogni order_item a stato ACCEPTED
+            updates = []
+            for item in order_items:
+                item_id = item.get('id')
+                if item_id:
+                    updates.append({
+                        "order_item_id": item_id,
+                        "state": "ACCEPTED"
+                    })
+            
+            if not updates:
+                logger.error(f"Nessun order_item valido da aggiornare per ordine {order_id}")
+                return False
+            
+            # Batch update degli order items
+            update_body = {"updates": updates}
+            response = requests.post(url, headers=self.headers, json=update_body)
+            
+            if response.status_code == 200:
+                logger.info(f"Ordine Refurbed {order_id} accettato: {len(updates)} items aggiornati")
+                return True
+            else:
+                logger.error(f"Errore accettazione ordine Refurbed {order_id}: {response.status_code} - {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Errore accettazione ordine Refurbed: {e}")
+            return False
         """Disabilita offerta (stock = 0)"""
         try:
             url = f"{self.base_url}/refb.merchant.v1.OfferService/UpdateOffer"
@@ -448,11 +497,11 @@ def get_pending_orders() -> List[Dict]:
         logger.info(f"DEBUG Campi data disponibili: released_at={first_order.get('released_at')}, created_at={first_order.get('created_at')}")
         logger.info(f"DEBUG Items structure: {first_order.get('items', [])[:1] if first_order.get('items') else 'empty'}")
     
-    # Filtra solo ordini NON spediti/cancellati
+    # Filtra solo ordini NON spediti/cancellati/rifiutati
     rf_pending = []
     for order in rf_orders_all:
         order_state = order.get('state', 'NEW')
-        if order_state not in ['SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED']:
+        if order_state not in ['SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED', 'REJECTED']:
             rf_pending.append(order)
             all_orders.append(normalize_order(order, 'refurbed'))
     
@@ -1081,6 +1130,10 @@ def api_accept_order_only():
             bm_client = BackMarketClient(BACKMARKET_TOKEN)
             if not bm_client.accept_order(order_id):
                 return jsonify({'success': False, 'error': 'Errore accettazione ordine'}), 500
+        elif source == 'Refurbed':
+            rf_client = RefurbishedClient(REFURBED_TOKEN)
+            if not rf_client.accept_order(order_id):
+                return jsonify({'success': False, 'error': 'Errore accettazione ordine'}), 500
         
         return jsonify({
             'success': True,
@@ -1142,16 +1195,23 @@ def api_accept_order():
         if not order:
             return jsonify({'success': False, 'error': 'Ordine non trovato'}), 404
         
+        # Accetta ordine sul marketplace
         if source == 'BackMarket':
             bm_client = BackMarketClient(BACKMARKET_TOKEN)
             if not bm_client.accept_order(order_id):
                 return jsonify({'success': False, 'error': 'Errore accettazione ordine'}), 500
+        elif source == 'Refurbed':
+            rf_client = RefurbishedClient(REFURBED_TOKEN)
+            if not rf_client.accept_order(order_id):
+                return jsonify({'success': False, 'error': 'Errore accettazione ordine'}), 500
         
+        # Disabilita prodotti su tutti i canali
         disable_results = {}
         for item in order['items']:
             result = disable_product_on_channels(item['sku'], source)
             disable_results[item['sku']] = result
         
+        # Crea DDT su InvoiceX
         ddt_number = create_ddt_invoicex(order)
         if not ddt_number:
             return jsonify({'success': False, 'error': 'Errore creazione DDT'}), 500

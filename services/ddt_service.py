@@ -16,6 +16,9 @@ def get_or_create_cliente(order: Dict, db_config: Dict) -> int:
         conn = mysql.connector.connect(**db_config)
         cursor = conn.cursor()
         
+        # LOG DEBUG
+        logger.info(f"🔍 Ricerca cliente: nome='{order['customer_name']}', email='{order['customer_email']}'")
+        
         name_parts = order['customer_name'].split(maxsplit=1)
         nome = name_parts[0] if name_parts else 'Cliente'
         cognome = name_parts[1] if len(name_parts) > 1 else 'Marketplace'
@@ -23,29 +26,30 @@ def get_or_create_cliente(order: Dict, db_config: Dict) -> int:
         # La prima colonna è l'ID (posizione 0)
         # Cerca prima per email (più affidabile)
         if order['customer_email']:
-            cursor.execute(
-                "SELECT * FROM clie_forn WHERE email = %s LIMIT 1",
-                (order['customer_email'],)
-            )
+            query = "SELECT * FROM clie_forn WHERE email = %s LIMIT 1"
+            logger.info(f"📧 Query ricerca per email: {query} | email={order['customer_email']}")
+            cursor.execute(query, (order['customer_email'],))
             result = cursor.fetchone()
             if result:
                 cliente_id = result[0]  # Prima colonna = ID
-                logger.info(f"Cliente trovato per email: ID {cliente_id}")
+                logger.info(f"✓ Cliente trovato per email: ID {cliente_id}")
                 cursor.close()
                 conn.close()
                 return cliente_id
+            else:
+                logger.info(f"✗ Nessun cliente trovato per email {order['customer_email']}")
         
-        # Cerca per ragione_sociale (colonna 4 nell'esempio)
-        cursor.execute(
-            "SELECT * FROM clie_forn WHERE ragione_sociale = %s LIMIT 1",
-            (order['customer_name'],)
-        )
+        # Cerca per ragione_sociale
+        query = "SELECT * FROM clie_forn WHERE ragione_sociale = %s LIMIT 1"
+        logger.info(f"👤 Query ricerca per nome: {query} | nome={order['customer_name']}")
+        cursor.execute(query, (order['customer_name'],))
         result = cursor.fetchone()
         
         if result:
             cliente_id = result[0]
-            logger.info(f"Cliente trovato per nome: ID {cliente_id}")
+            logger.info(f"✓ Cliente trovato per nome: ID {cliente_id}")
         else:
+            logger.info(f"✗ Nessun cliente trovato, procedo con creazione nuovo cliente")
             # Crea nuovo cliente - USA TUTTI I CAMPI RICHIESTI
             # Basato sull'esempio: 109 colonne totali
             insert_query = """
@@ -77,6 +81,17 @@ def get_or_create_cliente(order: Dict, db_config: Dict) -> int:
             """
             
             paese = order['country'][:2].upper() if order['country'] else 'IT'
+            
+            # LOG DEBUG valori da inserire
+            logger.info(f"📝 Preparazione INSERT nuovo cliente:")
+            logger.info(f"   - ragione_sociale: {order['customer_name'][:100]}")
+            logger.info(f"   - nome: {nome[:50]}")
+            logger.info(f"   - cognome: {cognome[:50]}")
+            logger.info(f"   - email: {order['customer_email'][:100] if order['customer_email'] else 'N/A'}")
+            logger.info(f"   - indirizzo: {order['address'][:100] if order['address'] else 'N/A'}")
+            logger.info(f"   - cap: {order['postal_code'][:10] if order['postal_code'] else 'N/A'}")
+            logger.info(f"   - localita: {order['city'][:50] if order['city'] else 'N/A'}")
+            logger.info(f"   - paese: {paese}")
             
             values = (
                 '',  # piva
@@ -161,17 +176,19 @@ def get_or_create_cliente(order: Dict, db_config: Dict) -> int:
             cursor.execute(insert_query, values)
             conn.commit()
             cliente_id = cursor.lastrowid
-            logger.info(f"Nuovo cliente creato: ID {cliente_id} - {order['customer_name']}")
+            logger.info(f"✓ Nuovo cliente creato con successo: ID {cliente_id} - {order['customer_name']}")
         
         cursor.close()
         conn.close()
         return cliente_id
         
     except mysql.connector.Error as e:
-        logger.error(f"Errore MySQL get_or_create_cliente: {e}")
+        logger.error(f"❌ Errore MySQL get_or_create_cliente: {e}")
+        logger.error(f"   Query fallita, ritorno cliente ID=1 di default")
         return 1
     except Exception as e:
-        logger.error(f"Errore generico get_or_create_cliente: {e}")
+        logger.error(f"❌ Errore generico get_or_create_cliente: {e}")
+        logger.error(f"   Ritorno cliente ID=1 di default")
         return 1
 
 
@@ -253,11 +270,22 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
             
             # Cerca prodotto con SKU esatto
             sku_to_search = str(item['sku']).strip()
+            
+            # LOG DEBUG
+            logger.info(f"🔍 Ricerca prodotto magazzino: SKU={sku_to_search}")
+            
             cursor.execute("SELECT codice FROM articoli WHERE codice = %s LIMIT 1", (sku_to_search,))
             product_result = cursor.fetchone()
             
             codice_articolo = product_result[0] if product_result else sku_to_search
             descrizione_pulita = item['name'][:200]
+            
+            # LOG DEBUG
+            if product_result:
+                logger.info(f"✓ Prodotto {sku_to_search} TROVATO in magazzino - scarico automatico attivo")
+            else:
+                logger.warning(f"✗ Prodotto {sku_to_search} NON TROVATO in magazzino - codice_articolo={codice_articolo}")
+                logger.warning(f"   Per collegarlo al magazzino, aggiungi prodotto in tabella 'articoli' con codice='{sku_to_search}'")
             
             values_line = (
                 ddt_id,
@@ -285,18 +313,16 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                 prezzo_unitario * qta
             )
             cursor.execute(query_lines, values_line)
-            
-            if product_result:
-                logger.info(f"Prodotto {sku_to_search} collegato a magazzino")
-            else:
-                logger.warning(f"Prodotto {sku_to_search} NON in magazzino - scarico manuale")
         
         conn.commit()
         cursor.close()
         conn.close()
         
         ddt_number_formatted = str(ddt_number).zfill(4)
-        logger.info(f"DDT {ddt_number_formatted}/{datetime.now().year} creato (ID: {ddt_id}, Cliente: {cliente_id})")
+        logger.info(f"✅ DDT {ddt_number_formatted}/{datetime.now().year} creato con successo")
+        logger.info(f"   - ID DDT: {ddt_id}")
+        logger.info(f"   - Cliente ID: {cliente_id}")
+        logger.info(f"   - Righe prodotto: {len(order['items'])}")
         return ddt_number_formatted
         
     except mysql.connector.Error as e:

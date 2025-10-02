@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
 """
 Sistema di gestione ordini marketplace per ReflexMania - VERSIONE DASHBOARD
-- Visualizza ordini pendenti da tutti i canali
-- Accetta ordini con workflow completo
-- Disabilita prodotto su tutti i canali
-- Crea DDT automaticamente
-- Genera CSV Packlink per ordini accettati
-
 Deploy su Railway con IP statico
 """
 
-from flask import Flask, request, jsonify, send_file, render_template_string
-import requests
-import mysql.connector
+from flask import Flask, request, jsonify, send_file
 import pandas as pd
 import os
-from datetime import datetime, timedelta
-from io import StringIO, BytesIO
+from datetime import datetime
+from io import BytesIO
 import logging
-from typing import List, Dict, Optional
-import json
+
+# Import moduli locali
+from config import (
+    BACKMARKET_TOKEN, BACKMARKET_BASE_URL,
+    REFURBED_TOKEN, REFURBED_BASE_URL,
+    OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID,
+    INVOICEX_CONFIG
+)
+from clients import BackMarketClient, RefurbishedClient, OctopiaClient
+from services import (
+    get_pending_orders, 
+    disable_product_on_channels,
+    create_ddt_invoicex
+)
 
 # Configurazione logging
 logging.basicConfig(level=logging.INFO)
@@ -27,724 +31,11 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# ==================== CONFIGURAZIONI ====================
+# Inizializza clients
+bm_client = BackMarketClient(BACKMARKET_TOKEN, BACKMARKET_BASE_URL)
+rf_client = RefurbishedClient(REFURBED_TOKEN, REFURBED_BASE_URL)
+oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)
 
-# BackMarket
-BACKMARKET_TOKEN = os.getenv('BACKMARKET_TOKEN', 'NDNjYzQzMDRmNGU2NTUzYzkzYjAwYjpCTVQtOTJhZjQ0MjU5YTlhMmYzMGRhMzA3YWJhZWMwZGI5YzUwMjAxMTdhYQ==')
-BACKMARKET_BASE_URL = "https://www.backmarket.fr"
-
-# Refurbed
-REFURBED_TOKEN = os.getenv('REFURBED_TOKEN', '277931ea-1ede-4a14-8aaa-41b2222d2aba')
-REFURBED_BASE_URL = "https://api.refurbed.com"
-
-# CDiscount (Octopia)
-OCTOPIA_CLIENT_ID = os.getenv('OCTOPIA_CLIENT_ID', 'reflexmania')
-OCTOPIA_CLIENT_SECRET = os.getenv('OCTOPIA_CLIENT_SECRET', 'qTpoc2gd40Huhzi64FIKY6f9NoKac0C6')
-OCTOPIA_SELLER_ID = os.getenv('OCTOPIA_SELLER_ID', '405765')
-
-# InvoiceX DB
-INVOICEX_CONFIG = {
-    'user': os.getenv('INVOICEX_USER', 'ilblogdi_inv2021'),
-    'password': os.getenv('INVOICEX_PASS', 'pWTrEKV}=fF-'),
-    'host': os.getenv('INVOICEX_HOST', 'nl1-ts3.a2hosting.com'),
-    'database': os.getenv('INVOICEX_DB', 'ilblogdi_invoicex2021'),
-}
-
-# ==================== CLIENT API ====================
-
-class BackMarketClient:
-    def __init__(self, token: str):
-        self.token = token
-        self.base_url = BACKMARKET_BASE_URL
-        self.headers = {
-            'Authorization': f'Basic {token}',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        }
-    
-    def get_orders(self, status: str = None, limit: int = 100) -> List[Dict]:
-        try:
-            url = f"{self.base_url}/ws/orders"
-            params = {'limit': limit}
-            if status:
-                params['status'] = status
-            response = requests.get(url, headers=self.headers, params=params)
-            response.raise_for_status()
-            data = response.json()
-            return data.get('results', [])
-        except Exception as e:
-            logger.error(f"Errore BackMarket get_orders: {e}")
-            return []
-    
-    def accept_order(self, order_id: str) -> bool:
-        """Accetta un ordine su BackMarket aggiornando le orderlines allo stato 2"""
-        try:
-            order_url = f"{self.base_url}/ws/orders/{order_id}"
-            order_response = requests.get(order_url, headers=self.headers)
-            
-            if order_response.status_code != 200:
-                logger.error(f"Impossibile recuperare dettagli ordine {order_id}")
-                return False
-            
-            order_data = order_response.json()
-            orderlines = order_data.get('orderlines', [])
-            
-            if not orderlines:
-                logger.error(f"Nessuna orderline trovata per ordine {order_id}")
-                return False
-            
-            success_count = 0
-            for orderline in orderlines:
-                sku = orderline.get('listing') or orderline.get('serial_number')
-                
-                if not sku:
-                    logger.warning(f"SKU mancante per orderline in ordine {order_id}")
-                    continue
-                
-                update_url = f"{self.base_url}/ws/orders/{order_id}"
-                data = {
-                    "order_id": int(order_id),
-                    "new_state": 2,
-                    "sku": sku
-                }
-                
-                response = requests.post(update_url, headers=self.headers, json=data)
-                
-                if response.status_code == 200:
-                    logger.info(f"Orderline {sku} accettata per ordine {order_id}")
-                    success_count += 1
-                else:
-                    logger.error(f"Errore accettazione orderline {sku}: {response.status_code} - {response.text}")
-            
-            if success_count > 0:
-                logger.info(f"Ordine {order_id} accettato: {success_count}/{len(orderlines)} orderlines")
-                return True
-            else:
-                return False
-                
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Errore connessione BackMarket API: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Errore imprevisto: {e}")
-            return False
-    
-    def disable_listing(self, listing_id: str) -> bool:
-        """Disabilita un listing (imposta stock a 0)"""
-        try:
-            url = f"{self.base_url}/ws/listings/{listing_id}/stock"
-            data = {'quantity': 0}
-            response = requests.patch(url, headers=self.headers, json=data)
-            
-            if response.status_code in [200, 204]:
-                logger.info(f"Listing BackMarket {listing_id} disabilitato")
-                return True
-            else:
-                logger.warning(f"BackMarket {listing_id}: {response.status_code} - {response.text}")
-                return False
-        except Exception as e:
-            logger.error(f"Errore disabilitazione listing BackMarket: {e}")
-            return False
-
-
-class RefurbishedClient:
-    def __init__(self, token: str):
-        self.token = token
-        self.base_url = REFURBED_BASE_URL
-        self.headers = {
-            'Authorization': f'Plain {token}',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        }
-    
-    def get_orders(self, state: str = None, limit: int = 100, sort_desc: bool = True) -> List[Dict]:
-        """Recupera ordini da Refurbed - gRPC style API (POST method)"""
-        try:
-            url = f"{self.base_url}/refb.merchant.v1.OrderService/ListOrders"
-            
-            body = {
-                "pagination": {
-                    "limit": limit
-                },
-                "sort": {
-                    "field": "CREATED_AT",
-                    "order": "DESC" if sort_desc else "ASC"
-                }
-            }
-            
-            if state:
-                body["state_filters"] = [state]
-            
-            logger.info(f"Refurbed: POST {url} con sort DESC")
-            
-            response = requests.post(url, headers=self.headers, json=body)
-            
-            logger.info(f"Refurbed: status {response.status_code}")
-            
-            response.raise_for_status()
-            
-            data = response.json()
-            orders = data.get('orders', [])
-            
-            logger.info(f"Refurbed: recuperati {len(orders)} ordini con stato {state}")
-            return orders
-            
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"Errore HTTP Refurbed: {e.response.status_code}")
-            logger.error(f"Response: {e.response.text}")
-            return []
-        except requests.exceptions.JSONDecodeError as e:
-            logger.error(f"Errore JSON Refurbed: {e}")
-            if 'response' in locals():
-                logger.error(f"Response text: {response.text}")
-            return []
-        except Exception as e:
-            logger.error(f"Errore Refurbed: {e}")
-            return []
-    
-    def accept_order(self, order_id: str) -> bool:
-        """Accetta un ordine su Refurbed aggiornando lo stato a ACCEPTED"""
-        try:
-            url = f"{self.base_url}/refb.merchant.v1.OrderItemService/BatchUpdateOrderItemsState"
-            
-            list_url = f"{self.base_url}/refb.merchant.v1.OrderItemService/ListOrderItemsByOrder"
-            list_body = {"order_id": order_id}
-            
-            list_response = requests.post(list_url, headers=self.headers, json=list_body)
-            
-            if list_response.status_code != 200:
-                logger.error(f"Impossibile recuperare order items per ordine Refurbed {order_id}")
-                return False
-            
-            list_data = list_response.json()
-            order_items = list_data.get('order_items', [])
-            
-            if not order_items:
-                logger.error(f"Nessun order_item trovato per ordine Refurbed {order_id}")
-                return False
-            
-            updates = []
-            for item in order_items:
-                item_id = item.get('id')
-                if item_id:
-                    updates.append({
-                        "order_item_id": item_id,
-                        "state": "ACCEPTED"
-                    })
-            
-            if not updates:
-                logger.error(f"Nessun order_item valido da aggiornare per ordine {order_id}")
-                return False
-            
-            update_body = {"updates": updates}
-            response = requests.post(url, headers=self.headers, json=update_body)
-            
-            if response.status_code == 200:
-                logger.info(f"Ordine Refurbed {order_id} accettato: {len(updates)} items aggiornati")
-                return True
-            else:
-                logger.error(f"Errore accettazione ordine Refurbed {order_id}: {response.status_code} - {response.text}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Errore accettazione ordine Refurbed: {e}")
-            return False
-    
-    def disable_offer(self, sku: str) -> bool:
-        """Disabilita offerta (stock = 0)"""
-        try:
-            url = f"{self.base_url}/refb.merchant.v1.OfferService/UpdateOffer"
-            body = {
-                "identifier": {"sku": sku},
-                "stock": 0
-            }
-            
-            response = requests.post(url, headers=self.headers, json=body)
-            
-            if response.status_code == 200:
-                logger.info(f"Offerta Refurbed SKU {sku} disabilitata")
-                return True
-            else:
-                logger.warning(f"Refurbed {sku}: {response.status_code} - {response.text}")
-                return False
-            
-        except Exception as e:
-            logger.error(f"Errore disabilitazione Refurbed: {e}")
-            return False
-
-
-class OctopiaClient:
-    def __init__(self, client_id: str, client_secret: str, seller_id: str):
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.seller_id = seller_id
-        self.auth_url = "https://auth.octopia-io.net/auth/realms/maas/protocol/openid-connect/token"
-        self.base_url = "https://api.octopia-io.net/seller/v2"
-        self.access_token = None
-        self.authenticate()
-    
-    def authenticate(self):
-        try:
-            auth_data = {
-                'grant_type': 'client_credentials',
-                'client_id': self.client_id,
-                'client_secret': self.client_secret
-            }
-            response = requests.post(
-                self.auth_url,
-                data=auth_data,
-                headers={'Content-Type': 'application/x-www-form-urlencoded'}
-            )
-            response.raise_for_status()
-            token_data = response.json()
-            self.access_token = token_data.get('access_token')
-            logger.info("Autenticazione Octopia riuscita")
-        except Exception as e:
-            logger.error(f"Errore autenticazione Octopia: {e}")
-    
-    def get_orders(self, limit: int = 100, offset: int = 0) -> List[Dict]:
-        try:
-            headers = {
-                'Authorization': f'Bearer {self.access_token}',
-                'sellerId': self.seller_id,
-                'Content-Type': 'application/json'
-            }
-            params = {'limit': limit, 'offset': offset}
-            response = requests.get(f"{self.base_url}/orders", headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
-            return data.get('items', [])
-        except Exception as e:
-            logger.error(f"Errore Octopia get_orders: {e}")
-            return []
-    
-    def disable_offer(self, seller_product_id: str) -> bool:
-        """Disabilita un'offerta (imposta stock a 0)"""
-        try:
-            headers = {
-                'Authorization': f'Bearer {self.access_token}',
-                'sellerId': self.seller_id,
-                'Content-Type': 'application/json'
-            }
-            
-            url = f"{self.base_url}/offers/{seller_product_id}"
-            data = {'stock': 0}
-            
-            response = requests.put(url, headers=headers, json=data)
-            response.raise_for_status()
-            logger.info(f"Offerta CDiscount {seller_product_id} disabilitata")
-            return True
-        except Exception as e:
-            logger.warning(f"Impossibile disabilitare offerta CDiscount via API: {e}")
-            logger.info(f"Disabilitazione CDiscount {seller_product_id} richiede package XML manuale")
-            return True
-
-# ==================== FUNZIONI HELPER ====================
-
-def normalize_order(order: Dict, source: str) -> Dict:
-    """Normalizza ordini da diversi marketplace"""
-    
-    if source == 'backmarket':
-        shipping = order.get('shipping_address', {})
-        items = []
-        for item in order.get('orderlines', []):
-            sku = item.get('serial_number') or item.get('listing', '')
-            items.append({
-                'sku': sku,
-                'name': item.get('product', 'N/A'),
-                'quantity': item.get('quantity', 1)
-            })
-        
-        return {
-            'order_id': str(order.get('order_id')),
-            'source': 'BackMarket',
-            'status': order.get('state', 'unknown'),
-            'date': order.get('date_creation', ''),
-            'customer_name': f"{shipping.get('first_name', '')} {shipping.get('last_name', '')}".strip(),
-            'customer_email': shipping.get('email', ''),
-            'customer_phone': shipping.get('phone', ''),
-            'address': f"{shipping.get('street', '')} {shipping.get('street2', '')}".strip(),
-            'city': shipping.get('city', ''),
-            'postal_code': shipping.get('postal_code', ''),
-            'country': shipping.get('country', ''),
-            'items': items,
-            'total': float(order.get('price', 0)),
-            'delivery_note': order.get('delivery_note', ''),
-            'accepted': False
-        }
-    
-    elif source == 'refurbed':
-        shipping = order.get('shipping_address', {})
-        items = []
-        
-        order_items = order.get('items', order.get('order_items', []))
-        
-        for item in order_items:
-            item_name = (
-                item.get('name') or 
-                item.get('title') or 
-                item.get('product_name') or
-                item.get('instance_name') or
-                'N/A'
-            )
-            
-            sku = item.get('sku', '')
-            if not sku:
-                offer_data = item.get('offer_data', {})
-                sku = offer_data.get('sku', item.get('id', ''))
-            
-            items.append({
-                'sku': sku,
-                'name': item_name,
-                'quantity': item.get('quantity', 1)
-            })
-        
-        order_date = (
-            order.get('released_at') or 
-            order.get('created_at') or 
-            order.get('order_date') or 
-            order.get('date') or
-            ''
-        )
-        
-        return {
-            'order_id': str(order.get('id', '')),
-            'source': 'Refurbed',
-            'status': order.get('state', 'NEW'),
-            'date': order_date,
-            'customer_name': f"{shipping.get('first_name', '')} {shipping.get('last_name', '')}".strip(),
-            'customer_email': order.get('email', ''),
-            'customer_phone': shipping.get('phone', ''),
-            'address': f"{shipping.get('street', '')} {shipping.get('house_no', '')} {shipping.get('supplement', '')}".strip(),
-            'city': shipping.get('town', ''),
-            'postal_code': shipping.get('post_code', ''),
-            'country': shipping.get('country_code', ''),
-            'items': items,
-            'total': float(order.get('settlement_total_paid', order.get('total_paid', 0))),
-            'accepted': False
-        }
-    
-    elif source == 'octopia':
-        items = []
-        shipping = {}
-        
-        for line in order.get('lines', []):
-            shipping = line.get('shippingAddress', {})
-            offer = line.get('offer', {})
-            items.append({
-                'sku': offer.get('sellerProductId', ''),
-                'name': offer.get('productTitle', 'N/A'),
-                'quantity': line.get('quantity', 1)
-            })
-        
-        return {
-            'order_id': order.get('orderId'),
-            'source': 'CDiscount',
-            'status': order.get('status', 'unknown'),
-            'date': order.get('createdAt', ''),
-            'customer_name': f"{shipping.get('firstName', '')} {shipping.get('lastName', '')}".strip(),
-            'customer_email': shipping.get('email', ''),
-            'customer_phone': shipping.get('phone', ''),
-            'address': shipping.get('addressLine1', ''),
-            'city': shipping.get('city', ''),
-            'postal_code': shipping.get('postalCode', ''),
-            'country': shipping.get('countryCode', ''),
-            'items': items,
-            'total': float(order.get('totalPrice', {}).get('sellingPrice', 0)),
-            'accepted': False
-        }
-    
-    return {}
-
-
-def get_pending_orders() -> List[Dict]:
-    """Recupera tutti gli ordini pendenti da tutti i canali"""
-    all_orders = []
-    seen_order_ids = set()
-    
-    bm_client = BackMarketClient(BACKMARKET_TOKEN)
-    bm_count = 0
-    
-    for status in ['waiting_acceptance', 'accepted', 'to_ship']:
-        orders = bm_client.get_orders(status=status)
-        for order in orders:
-            order_state = order.get('state', 0)
-            order_id = str(order.get('order_id'))
-            
-            if order_id in seen_order_ids:
-                continue
-            
-            if order_state != 9:
-                all_orders.append(normalize_order(order, 'backmarket'))
-                seen_order_ids.add(order_id)
-                bm_count += 1
-        logger.info(f"BackMarket status '{status}': {len(orders)} ordini totali")
-    
-    logger.info(f"BackMarket totale NON spediti (deduplicati): {bm_count} ordini")
-    
-    rf_client = RefurbishedClient(REFURBED_TOKEN)
-    rf_orders_all = rf_client.get_orders(state=None, limit=100, sort_desc=True)
-    
-    logger.info(f"Refurbed: recuperati {len(rf_orders_all)} ordini TOTALI con sort DESC")
-    
-    if len(rf_orders_all) > 0:
-        first_order = rf_orders_all[0]
-        logger.info(f"DEBUG Refurbed order {first_order.get('id')}: state={first_order.get('state')}")
-        logger.info(f"DEBUG Campi data disponibili: released_at={first_order.get('released_at')}, created_at={first_order.get('created_at')}")
-        logger.info(f"DEBUG Items structure: {first_order.get('items', [])[:1] if first_order.get('items') else 'empty'}")
-    
-    rf_pending = []
-    for order in rf_orders_all:
-        order_state = order.get('state', 'NEW')
-        if order_state not in ['SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED', 'REJECTED']:
-            rf_pending.append(order)
-            all_orders.append(normalize_order(order, 'refurbed'))
-    
-    rf_count = len(rf_pending)
-    logger.info(f"Refurbed: {rf_count} ordini pendenti su {len(rf_orders_all)} totali")
-    
-    oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)
-    oct_orders = oct_client.get_orders()
-    cd_count = 0
-    
-    for order in oct_orders:
-        if order.get('status') not in ['Shipped', 'Delivered', 'Cancelled']:
-            all_orders.append(normalize_order(order, 'octopia'))
-            cd_count += 1
-    
-    logger.info(f"CDiscount: {cd_count} ordini da processare")
-    
-    return all_orders
-
-
-def disable_product_on_channels(sku: str, source: str) -> Dict:
-    """Disabilita un prodotto su tutti i canali impostando stock a 0"""
-    results = {
-        'backmarket': {'attempted': False, 'success': False, 'message': ''},
-        'refurbed': {'attempted': False, 'success': False, 'message': ''},
-        'cdiscount': {'attempted': False, 'success': False, 'message': ''}
-    }
-    
-    logger.info(f"Disabilitazione prodotto SKU {sku} su tutti i canali")
-    
-    try:
-        bm_client = BackMarketClient(BACKMARKET_TOKEN)
-        results['backmarket']['attempted'] = True
-        success = bm_client.disable_listing(sku)
-        results['backmarket']['success'] = success
-        results['backmarket']['message'] = 'Disabilitato' if success else 'Errore disabilitazione'
-    except Exception as e:
-        results['backmarket']['message'] = f'Errore: {str(e)}'
-        logger.error(f"Errore disabilitazione BackMarket: {e}")
-    
-    try:
-        rf_client = RefurbishedClient(REFURBED_TOKEN)
-        results['refurbed']['attempted'] = True
-        success = rf_client.disable_offer(sku)
-        results['refurbed']['success'] = success
-        results['refurbed']['message'] = 'Disabilitato' if success else 'Errore disabilitazione'
-    except Exception as e:
-        results['refurbed']['message'] = f'Errore: {str(e)}'
-        logger.error(f"Errore disabilitazione Refurbed: {e}")
-    
-    try:
-        oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)
-        results['cdiscount']['attempted'] = True
-        success = oct_client.disable_offer(sku)
-        results['cdiscount']['success'] = success
-        results['cdiscount']['message'] = 'Disabilitato' if success else 'Package XML richiesto'
-    except Exception as e:
-        results['cdiscount']['message'] = f'Errore: {str(e)}'
-        logger.error(f"Errore disabilitazione CDiscount: {e}")
-    
-    logger.info(f"Risultati disabilitazione SKU {sku}:")
-    logger.info(f"  - BackMarket: {results['backmarket']}")
-    logger.info(f"  - Refurbed: {results['refurbed']}")
-    logger.info(f"  - CDiscount: {results['cdiscount']}")
-    
-    return results
-
-
-def get_or_create_cliente(order: Dict) -> int:
-    """Cerca o crea un cliente nel database InvoiceX e ritorna l'ID"""
-    try:
-        conn = mysql.connector.connect(**INVOICEX_CONFIG)
-        cursor = conn.cursor()
-        
-        name_parts = order['customer_name'].split(maxsplit=1)
-        nome = name_parts[0] if name_parts else 'Cliente'
-        cognome = name_parts[1] if len(name_parts) > 1 else 'Marketplace'
-        
-        if order['customer_email']:
-            cursor.execute(
-                "SELECT id FROM clie_forn WHERE email = %s LIMIT 1",
-                (order['customer_email'],)
-            )
-        else:
-            cursor.execute(
-                "SELECT id FROM clie_forn WHERE ragione_sociale = %s LIMIT 1",
-                (order['customer_name'],)
-            )
-        
-        result = cursor.fetchone()
-        
-        if result:
-            cliente_id = result[0]
-            logger.info(f"Cliente esistente trovato: ID {cliente_id}")
-        else:
-            insert_query = """
-            INSERT INTO clie_forn 
-            (ragione_sociale, nome, cognome, indirizzo, cap, localita, 
-             provincia, paese, telefono, cellulare, email, tipo_clifor)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """
-            
-            provincia = order['country'][:2] if order['country'] else ''
-            
-            values = (
-                order['customer_name'],
-                nome,
-                cognome,
-                order['address'][:50] if order['address'] else '',
-                order['postal_code'][:10] if order['postal_code'] else '',
-                order['city'][:30] if order['city'] else '',
-                provincia,
-                order['country'][:2] if order['country'] else 'IT',
-                order['customer_phone'][:20] if order['customer_phone'] else '',
-                order['customer_phone'][:20] if order['customer_phone'] else '',
-                order['customer_email'][:100] if order['customer_email'] else '',
-                'C'
-            )
-            
-            cursor.execute(insert_query, values)
-            conn.commit()
-            cliente_id = cursor.lastrowid
-            logger.info(f"Nuovo cliente creato: ID {cliente_id} - {order['customer_name']}")
-        
-        cursor.close()
-        conn.close()
-        return cliente_id
-        
-    except mysql.connector.Error as e:
-        logger.error(f"Errore MySQL get_or_create_cliente: {e}")
-        return 1
-    except Exception as e:
-        logger.error(f"Errore generico get_or_create_cliente: {e}")
-        return 1
-
-
-def create_ddt_invoicex(order: Dict) -> Optional[str]:
-    """Crea DDT su InvoiceX e ritorna il numero DDT"""
-    try:
-        conn = mysql.connector.connect(**INVOICEX_CONFIG)
-        cursor = conn.cursor()
-        
-        query_num = """
-        SELECT MAX(numero) as max_num 
-        FROM test_ddt 
-        WHERE anno = YEAR(CURDATE())
-        """
-        cursor.execute(query_num)
-        result = cursor.fetchone()
-        max_num = result[0] if result[0] else 0
-        ddt_number = max_num + 1
-        
-        cliente_id = get_or_create_cliente(order)
-        
-        query_header = """
-        INSERT INTO test_ddt 
-        (serie, numero, anno, cliente, data, pagamento, note, 
-         totale_imponibile, totale_iva, totale, 
-         sconto1, sconto2, sconto3, stato, codice_listino, stampato,
-         prezzi_ivati, sconto, totale_imponibile_pre_sconto, totale_ivato_pre_sconto,
-         deposito, mail_inviata)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        
-        values_header = (
-            '',
-            ddt_number,
-            datetime.now().year,
-            cliente_id,
-            datetime.now().date(),
-            'MARKETPLACE',
-            f"Ordine {order['source']} #{order['order_id']}\nCliente: {order['customer_name']}\nEmail: {order['customer_email']}\nTelefono: {order['customer_phone']}\nIndirizzo: {order['address']}, {order['postal_code']} {order['city']} ({order['country']})",
-            float(order['total']),
-            0.00,
-            float(order['total']),
-            0.00,
-            0.00,
-            0.00,
-            'P',
-            1,
-            datetime(1, 1, 1, 0, 0),
-            'N',
-            0.00,
-            float(order['total']),
-            float(order['total']),
-            0,
-            0
-        )
-        
-        cursor.execute(query_header, values_header)
-        ddt_id = cursor.lastrowid
-        
-        query_lines = """
-        INSERT INTO righ_ddt
-        (id_padre, serie, numero, anno, riga, data, codice_articolo, descrizione,
-         um, quantita, prezzo, iva, sconto1, sconto2, stato, is_descrizione,
-         prezzo_ivato, totale_ivato, totale_imponibile, prezzo_netto_unitario, 
-         prezzo_ivato_netto_unitario, prezzo_netto_totale, prezzo_ivato_netto_totale)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        
-        for idx, item in enumerate(order['items'], start=1):
-            prezzo_unitario = float(order['total']) / len(order['items'])
-            qta = float(item['quantity'])
-            
-            values_line = (
-                ddt_id,
-                '',
-                ddt_number,
-                datetime.now().year,
-                idx,
-                datetime.now().date(),
-                item['sku'][:20],
-                f"{item['name']}\nSKU: {item['sku']}",
-                '',
-                qta,
-                prezzo_unitario,
-                '36',
-                0.00,
-                0.00,
-                'P',
-                'N',
-                prezzo_unitario,
-                prezzo_unitario * qta,
-                prezzo_unitario * qta,
-                prezzo_unitario,
-                prezzo_unitario,
-                prezzo_unitario * qta,
-                prezzo_unitario * qta
-            )
-            cursor.execute(query_lines, values_line)
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
-        ddt_number_formatted = str(ddt_number).zfill(4)
-        logger.info(f"DDT {ddt_number_formatted}/{datetime.now().year} creato con successo (ID: {ddt_id}, Cliente ID: {cliente_id})")
-        return ddt_number_formatted
-        
-    except mysql.connector.Error as e:
-        logger.error(f"Errore MySQL creazione DDT: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Errore generico creazione DDT: {e}")
-        return None
-
-# ==================== ROUTES ====================
 
 @app.route('/')
 def dashboard():
@@ -968,114 +259,128 @@ def dashboard():
                         
                         let packingSlipBtn = '';
                         if (order.delivery_note) {
-                            packingSlipBtn = `
-                                <a href="${order.delivery_note}" target="_blank" class="btn btn-primary btn-small" style="margin-right: 5px; background: #6c757d;">
+                            packingSlipBtn = \`
+                                <a href="\${order.delivery_note}" target="_blank" class="btn btn-primary btn-small" style="margin-right: 5px; background: #6c757d;">
                                     Packing Slip
                                 </a>
-                            `;
+                            \`;
                         }
                         
                         if (stateNum === 1 || order.status === 'waiting_acceptance') {
-                            actionButtons = `
-                                ${packingSlipBtn}
-                                <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
+                            actionButtons = \`
+                                \${packingSlipBtn}
+                                <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('\${order.order_id}', '\${order.source}')" style="margin-right: 5px;">
                                     Accetta
                                 </button>
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')">
                                     Crea DDT
                                 </button>
-                            `;
+                            \`;
                             statusBadge = '<span class="badge badge-pending">Da Accettare</span>';
                         } else if (stateNum === 2 || order.status === 'accepted') {
-                            actionButtons = `
-                                ${packingSlipBtn}
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
+                            actionButtons = \`
+                                \${packingSlipBtn}
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')" style="margin-right: 5px;">
                                     Crea DDT
                                 </button>
-                                <button class="btn btn-primary btn-small" onclick="markAsShipped('${order.order_id}', '${order.source}')" style="background: #17a2b8;">
+                                <button class="btn btn-primary btn-small" onclick="markAsShipped('\${order.order_id}', '\${order.source}')" style="background: #17a2b8;">
                                     Spedito
                                 </button>
-                            `;
+                            \`;
                             statusBadge = '<span class="badge badge-accepted">Accettato</span>';
                         } else if (stateNum === 3 || order.status === 'to_ship') {
-                            actionButtons = `
-                                ${packingSlipBtn}
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
+                            actionButtons = \`
+                                \${packingSlipBtn}
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')" style="margin-right: 5px;">
                                     Crea DDT
                                 </button>
-                                <button class="btn btn-primary btn-small" onclick="markAsShipped('${order.order_id}', '${order.source}')" style="background: #17a2b8;">
+                                <button class="btn btn-primary btn-small" onclick="markAsShipped('\${order.order_id}', '\${order.source}')" style="background: #17a2b8;">
                                     Spedito
                                 </button>
-                            `;
+                            \`;
                             statusBadge = '<span class="badge badge-accepted">Da Spedire</span>';
                         } else {
-                            actionButtons = `
-                                ${packingSlipBtn}
-                                <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
+                            actionButtons = \`
+                                \${packingSlipBtn}
+                                <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('\${order.order_id}', '\${order.source}')" style="margin-right: 5px;">
                                     Accetta
                                 </button>
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')">
                                     Crea DDT
                                 </button>
-                            `;
+                            \`;
                             statusBadge = '<span class="badge badge-pending">Pendente</span>';
                         }
                     } else if (order.source === 'Refurbed') {
                         const orderState = order.status;
                         
                         if (orderState === 'NEW') {
-                            actionButtons = `
-                                <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
+                            actionButtons = \`
+                                <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('\${order.order_id}', '\${order.source}')" style="margin-right: 5px;">
                                     Accetta
                                 </button>
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')">
                                     Crea DDT
                                 </button>
-                            `;
+                            \`;
                             statusBadge = '<span class="badge badge-pending">Da Accettare</span>';
                         } else if (orderState === 'ACCEPTED') {
-                            actionButtons = `
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
+                            actionButtons = \`
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')" style="margin-right: 5px;">
                                     Crea DDT
                                 </button>
-                                <button class="btn btn-primary btn-small" onclick="markAsShipped('${order.order_id}', '${order.source}')" style="background: #17a2b8;">
+                                <button class="btn btn-primary btn-small" onclick="markAsShipped('\${order.order_id}', '\${order.source}')" style="background: #17a2b8;">
                                     Spedito
                                 </button>
-                            `;
+                            \`;
                             statusBadge = '<span class="badge badge-accepted">Accettato</span>';
                         } else {
-                            actionButtons = `
-                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
+                            actionButtons = \`
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')">
                                     Crea DDT
                                 </button>
-                            `;
+                            \`;
                             statusBadge = '<span class="badge badge-pending">Pendente</span>';
                         }
                     } else {
-                        actionButtons = `
-                            <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
+                        actionButtons = \`
+                            <button class="btn btn-success btn-small" onclick="createDDTOnly('\${order.order_id}', '\${order.source}')">
                                 Crea DDT
                             </button>
-                        `;
+                        \`;
                         statusBadge = '<span class="badge badge-pending">Pendente</span>';
                     }
                     
-                    return `
+                    return \`
                         <tr>
-                            <td><strong>${order.order_id}</strong></td>
-                            <td><span class="badge ${badgeClass}">${order.source}</span></td>
-                            <td>${order.customer_name}</td>
-                            <td>${productInfo}</td>
-                            <td><code>${skuInfo}</code></td>
-                            <td>${date}</td>
-                            <td><strong>€${order.total.toFixed(2)}</strong></td>
-                            <td>${statusBadge}</td>
-                            <td>${actionButtons}</td>
+                            <td><strong>\${order.order_id}</strong></td>
+                            <td><span class="badge \${badgeClass}">\${order.source}</span></td>
+                            <td>\${order.customer_name}</td>
+                            <td>\${productInfo}</td>
+                            <td><code>\${skuInfo}</code></td>
+                            <td>\${date}</td>
+                            <td><strong>€\${order.total.toFixed(2)}</strong></td>
+                            <td>\${statusBadge}</td>
+                            <td>\${actionButtons}</td>
                         </tr>
-                    `;
+                    \`;
                 }).join('');
             }
             
+            // Continua nella PARTE 2...
+        </script>
+    </body>
+    </html>
+    """
+    
+    return html
+"""
+PARTE 2 di app.py - API Routes
+Incolla questo DOPO la PARTE 1
+"""
+
+# Continua JavaScript dalla PARTE 1
+"""
             function markAsShipped(orderId, source) {
                 const trackingNumber = prompt(`Inserisci il numero di tracking per l'ordine ${orderId}:`);
                 
@@ -1186,16 +491,15 @@ def dashboard():
         </script>
     </body>
     </html>
-    """
-    
-    return html
+"""
 
+# ==================== API ROUTES ====================
 
 @app.route('/api/orders')
 def api_orders():
     """API: ritorna lista ordini pendenti"""
     try:
-        orders = get_pending_orders()
+        orders = get_pending_orders(bm_client, rf_client, oct_client)
         return jsonify({'orders': orders, 'count': len(orders)})
     except Exception as e:
         logger.error(f"Errore API orders: {e}")
@@ -1216,38 +520,8 @@ def api_mark_shipped():
             return jsonify({'success': False, 'error': 'Tracking number obbligatorio'}), 400
         
         if source == 'BackMarket':
-            bm_client = BackMarketClient(BACKMARKET_TOKEN)
-            
-            order_url = f"{bm_client.base_url}/ws/orders/{order_id}"
-            order_response = requests.get(order_url, headers=bm_client.headers)
-            
-            if order_response.status_code != 200:
-                return jsonify({'success': False, 'error': 'Impossibile recuperare ordine'}), 500
-            
-            order_data = order_response.json()
-            orderlines = order_data.get('orderlines', [])
-            
-            if not orderlines:
-                return jsonify({'success': False, 'error': 'Nessuna orderline trovata'}), 500
-            
-            sku = orderlines[0].get('listing') or orderlines[0].get('serial_number')
-            
-            update_url = f"{bm_client.base_url}/ws/orders/{order_id}"
-            update_data = {
-                "order_id": int(order_id),
-                "new_state": 3,
-                "sku": sku,
-                "tracking_number": tracking_number,
-                "tracking_url": tracking_url
-            }
-            
-            response = requests.post(update_url, headers=bm_client.headers, json=update_data)
-            
-            if response.status_code != 200:
-                logger.error(f"Errore BackMarket mark shipped: {response.status_code} - {response.text}")
-                return jsonify({'success': False, 'error': f'Errore API BackMarket: {response.text}'}), 500
-            
-            logger.info(f"Ordine {order_id} marcato come spedito su BackMarket")
+            if not bm_client.mark_as_shipped(order_id, tracking_number, tracking_url):
+                return jsonify({'success': False, 'error': 'Errore comunicazione tracking'}), 500
         
         return jsonify({
             'success': True,
@@ -1270,11 +544,9 @@ def api_accept_order_only():
         source = data.get('source')
         
         if source == 'BackMarket':
-            bm_client = BackMarketClient(BACKMARKET_TOKEN)
             if not bm_client.accept_order(order_id):
                 return jsonify({'success': False, 'error': 'Errore accettazione ordine'}), 500
         elif source == 'Refurbed':
-            rf_client = RefurbishedClient(REFURBED_TOKEN)
             if not rf_client.accept_order(order_id):
                 return jsonify({'success': False, 'error': 'Errore accettazione ordine'}), 500
         
@@ -1297,18 +569,19 @@ def api_create_ddt_only():
         order_id = data.get('order_id')
         source = data.get('source')
         
-        all_orders = get_pending_orders()
+        all_orders = get_pending_orders(bm_client, rf_client, oct_client)
         order = next((o for o in all_orders if o['order_id'] == order_id and o['source'] == source), None)
         
         if not order:
             return jsonify({'success': False, 'error': 'Ordine non trovato'}), 404
         
-        disable_results = {}
+        # Disabilita prodotti su tutti i canali
         for item in order['items']:
-            result = disable_product_on_channels(item['sku'], source)
-            disable_results[item['sku']] = result
+            listing_id = item.get('listing_id', '')
+            disable_product_on_channels(item['sku'], listing_id, bm_client, rf_client, oct_client)
         
-        ddt_number = create_ddt_invoicex(order)
+        # Crea DDT
+        ddt_number = create_ddt_invoicex(order, INVOICEX_CONFIG)
         if not ddt_number:
             return jsonify({'success': False, 'error': 'Errore creazione DDT'}), 500
         
@@ -1324,55 +597,11 @@ def api_create_ddt_only():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/accept_order', methods=['POST'])
-def api_accept_order():
-    """API: accetta ordine e crea DDT"""
-    try:
-        data = request.json
-        order_id = data.get('order_id')
-        source = data.get('source')
-        
-        all_orders = get_pending_orders()
-        order = next((o for o in all_orders if o['order_id'] == order_id and o['source'] == source), None)
-        
-        if not order:
-            return jsonify({'success': False, 'error': 'Ordine non trovato'}), 404
-        
-        if source == 'BackMarket':
-            bm_client = BackMarketClient(BACKMARKET_TOKEN)
-            if not bm_client.accept_order(order_id):
-                return jsonify({'success': False, 'error': 'Errore accettazione ordine'}), 500
-        elif source == 'Refurbed':
-            rf_client = RefurbishedClient(REFURBED_TOKEN)
-            if not rf_client.accept_order(order_id):
-                return jsonify({'success': False, 'error': 'Errore accettazione ordine'}), 500
-        
-        disable_results = {}
-        for item in order['items']:
-            result = disable_product_on_channels(item['sku'], source)
-            disable_results[item['sku']] = result
-        
-        ddt_number = create_ddt_invoicex(order)
-        if not ddt_number:
-            return jsonify({'success': False, 'error': 'Errore creazione DDT'}), 500
-        
-        return jsonify({
-            'success': True,
-            'ddt_number': ddt_number,
-            'order_id': order_id,
-            'message': 'Ordine accettato e DDT creato'
-        })
-        
-    except Exception as e:
-        logger.error(f"Errore accept_order: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
 @app.route('/api/packlink_csv')
 def api_packlink_csv():
     """API: genera CSV Packlink per ordini accettati"""
     try:
-        orders = get_pending_orders()
+        orders = get_pending_orders(bm_client, rf_client, oct_client)
         
         rows = []
         for order in orders:

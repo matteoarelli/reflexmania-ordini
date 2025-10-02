@@ -908,6 +908,37 @@ def dashboard():
                             `;
                             statusBadge = '<span class="badge badge-pending">Pendente</span>';
                         }
+                    } else if (order.source === 'Refurbed') {
+                        const orderState = order.status;
+                        
+                        if (orderState === 'NEW') {
+                            actionButtons = `
+                                <button class="btn btn-primary btn-small" onclick="acceptOrderOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
+                                    Accetta
+                                </button>
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
+                                    Crea DDT
+                                </button>
+                            `;
+                            statusBadge = '<span class="badge badge-pending">Da Accettare</span>';
+                        } else if (orderState === 'ACCEPTED') {
+                            actionButtons = `
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')" style="margin-right: 5px;">
+                                    Crea DDT
+                                </button>
+                                <button class="btn btn-primary btn-small" onclick="markAsShipped('${order.order_id}', '${order.source}')" style="background: #17a2b8;">
+                                    Spedito
+                                </button>
+                            `;
+                            statusBadge = '<span class="badge badge-accepted">Accettato</span>';
+                        } else {
+                            actionButtons = `
+                                <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">
+                                    Crea DDT
+                                </button>
+                            `;
+                            statusBadge = '<span class="badge badge-pending">Pendente</span>';
+                        }
                     } else {
                         actionButtons = `
                             <button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">

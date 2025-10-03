@@ -163,7 +163,6 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
             
             logger.info(f"Ricerca prodotto per seriale/lotto: {seriale}")
             
-            # Cerca seriale in movimenti_magazzino
             cursor.execute("""
                 SELECT articolo, matricola, lotto 
                 FROM movimenti_magazzino 
@@ -188,7 +187,6 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                     logger.info(f"Prodotto {codice_articolo} trovato in magazzino - scarico automatico attivo")
                     base_description = articolo_result[1] if articolo_result[1] else item['name']
                     
-                    # Formato InvoiceX: NomeS/N: seriale - Lotto: lotto
                     if matricola_db and lotto_db:
                         descrizione_pulita = f"{base_description}S/N: {matricola_db} - Lotto: {lotto_db}"[:200]
                     elif matricola_db:
@@ -204,7 +202,6 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                     descrizione_pulita = f"{item['name']}S/N: {seriale}"[:200]
             else:
                 logger.warning(f"Seriale {seriale} NON trovato in movimenti_magazzino")
-                logger.warning(f"Per collegarlo, carica prima il prodotto in magazzino con matricola o lotto={seriale}")
                 codice_articolo = seriale
                 descrizione_pulita = f"{item['name']}S/N: {seriale}"[:200]
                 matricola_db = None
@@ -238,10 +235,10 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
             cursor.execute(query_lines, values_line)
             riga_ddt_id = cursor.lastrowid
             
-            # IMPORTANTE: Inserisci nella tabella corretta per lo scarico magazzino
+            # Inserisci nella tabella corretta per lo scarico magazzino
             if movimento_result and (matricola_db or lotto_db):
                 if lotto_db:
-                    # Prodotti con lotto (corpi macchina) → righ_ddt_lotti
+                    # Prodotti con lotto → righ_ddt_lotti
                     query_lotto = """
                     INSERT INTO righ_ddt_lotti
                     (id_padre, lotto, codice_articolo, qta, matricola)
@@ -257,13 +254,13 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                     )
                     
                     cursor.execute(query_lotto, values_lotto)
-                    logger.info(f"Inserito in righ_ddt_lotti (corpo macchina): matricola={matricola_db}, lotto={lotto_db}")
+                    logger.info(f"Inserito in righ_ddt_lotti: matricola={matricola_db}, lotto={lotto_db}")
                 
                 elif matricola_db:
-                    # Prodotti solo con matricola (obiettivi, accessori) → righ_ddt_matricole
+                    # Prodotti solo con matricola → righ_ddt_matricole
                     query_matricola = """
                     INSERT INTO righ_ddt_matricole
-                    (serie_old, numero_old, anno_old, riga_old, matricola, id_padre)
+                    (serie_old, numero_old, anno_old, riga_old, matricola, id_padre_righe)
                     VALUES (%s, %s, %s, %s, %s, %s)
                     """
                     
@@ -277,18 +274,16 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                     )
                     
                     cursor.execute(query_matricola, values_matricola)
-                    logger.info(f"Inserito in righ_ddt_matricole (obiettivo/accessorio): matricola={matricola_db}")
+                    logger.info(f"Inserito in righ_ddt_matricole: matricola={matricola_db}")
         
         conn.commit()
         cursor.close()
         conn.close()
         
         ddt_number_formatted = str(ddt_number).zfill(4)
-        logger.info(f"DDT {ddt_number_formatted}/{datetime.now().year} creato con successo")
-        logger.info(f"  - ID DDT: {ddt_id}")
+        logger.info(f"DDT {ddt_number_formatted}/{datetime.now().year} creato")
         logger.info(f"  - Cliente ID: {cliente_id}")
-        logger.info(f"  - Metodo pagamento: {payment_method}")
-        logger.info(f"  - Righe prodotto: {len(order['items'])}")
+        logger.info(f"  - Pagamento: {payment_method}")
         return ddt_number_formatted
         
     except mysql.connector.Error as e:

@@ -180,24 +180,43 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
             prezzo_unitario = float(order['total']) / len(order['items'])
             qta = float(item['quantity'])
             
-            # Cerca prodotto con SKU esatto
-            sku_to_search = str(item['sku']).strip()
+            # Seriale del prodotto (SKU dal marketplace)
+            seriale = str(item['sku']).strip()
             
             # LOG DEBUG
-            logger.info(f"🔍 Ricerca prodotto magazzino: SKU={sku_to_search}")
+            logger.info(f"🔍 Ricerca prodotto per seriale: {seriale}")
             
-            cursor.execute("SELECT codice FROM articoli WHERE codice = %s LIMIT 1", (sku_to_search,))
-            product_result = cursor.fetchone()
+            # STEP 1: Cerca il seriale in movimenti_magazzino per trovare il codice articolo
+            cursor.execute("""
+                SELECT articolo 
+                FROM movimenti_magazzino 
+                WHERE matricola = %s OR lotto = %s
+                ORDER BY id DESC 
+                LIMIT 1
+            """, (seriale, seriale))
             
-            codice_articolo = product_result[0] if product_result else sku_to_search
-            descrizione_pulita = item['name'][:200]
+            movimento_result = cursor.fetchone()
             
-            # LOG DEBUG
-            if product_result:
-                logger.info(f"✓ Prodotto {sku_to_search} TROVATO in magazzino - scarico automatico attivo")
+            if movimento_result:
+                codice_articolo = movimento_result[0]
+                logger.info(f"✓ Seriale {seriale} trovato in movimenti_magazzino → Codice articolo: {codice_articolo}")
+                
+                # STEP 2: Verifica che l'articolo esista nella tabella articoli
+                cursor.execute("SELECT codice, descrizione FROM articoli WHERE codice = %s LIMIT 1", (codice_articolo,))
+                articolo_result = cursor.fetchone()
+                
+                if articolo_result:
+                    logger.info(f"✓ Prodotto {codice_articolo} TROVATO in magazzino - scarico automatico attivo")
+                    descrizione_pulita = articolo_result[1][:200] if articolo_result[1] else item['name'][:200]
+                else:
+                    logger.warning(f"⚠ Codice articolo {codice_articolo} non esiste nella tabella articoli!")
+                    descrizione_pulita = item['name'][:200]
             else:
-                logger.warning(f"✗ Prodotto {sku_to_search} NON TROVATO in magazzino - codice_articolo={codice_articolo}")
-                logger.warning(f"   Per collegarlo al magazzino, aggiungi prodotto in tabella 'articoli' con codice='{sku_to_search}'")
+                # STEP 3: Seriale non trovato - usa il seriale come codice articolo
+                logger.warning(f"✗ Seriale {seriale} NON trovato in movimenti_magazzino")
+                logger.warning(f"   Per collegarlo, registra prima il prodotto in magazzino con questo seriale")
+                codice_articolo = seriale
+                descrizione_pulita = item['name'][:200]
             
             values_line = (
                 ddt_id,

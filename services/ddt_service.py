@@ -188,23 +188,25 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                     logger.info(f"Prodotto {codice_articolo} trovato in magazzino - scarico automatico attivo")
                     base_description = articolo_result[1] if articolo_result[1] else item['name']
                     
-                    # Costruisci descrizione con seriale e/o lotto
-                    desc_parts = [base_description]
-                    if matricola_db:
-                        desc_parts.append(f"S/N:{matricola_db}")
-                    if lotto_db:
-                        desc_parts.append(f"Lotto: {lotto_db}")
+                    # Formato InvoiceX: NomeS/N: seriale - Lotto: lotto (SENZA SPAZI tra nome e S/N)
+                    if matricola_db and lotto_db:
+                        descrizione_pulita = f"{base_description}S/N: {matricola_db} - Lotto: {lotto_db}"[:200]
+                    elif matricola_db:
+                        descrizione_pulita = f"{base_description}S/N: {matricola_db}"[:200]
+                    elif lotto_db:
+                        descrizione_pulita = f"{base_description}Lotto: {lotto_db}"[:200]
+                    else:
+                        descrizione_pulita = base_description[:200]
                     
-                    descrizione_pulita = " - ".join(desc_parts)[:200]
                     logger.info(f"Descrizione completa: {descrizione_pulita}")
                 else:
                     logger.warning(f"Codice articolo {codice_articolo} non trovato in tabella articoli")
-                    descrizione_pulita = f"{item['name']} S/N:{seriale}"[:200]
+                    descrizione_pulita = f"{item['name']}S/N: {seriale}"[:200]
             else:
                 logger.warning(f"Seriale {seriale} NON trovato in movimenti_magazzino")
                 logger.warning(f"Per collegarlo, carica prima il prodotto in magazzino con matricola o lotto={seriale}")
                 codice_articolo = seriale
-                descrizione_pulita = f"{item['name']} S/N:{seriale}"[:200]
+                descrizione_pulita = f"{item['name']}S/N: {seriale}"[:200]
             
             values_line = (
                 ddt_id,

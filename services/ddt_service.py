@@ -166,12 +166,14 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
         ddt_id = cursor.lastrowid
         
         # Verifica quali colonne esistono in righ_ddt
-        cursor.execute("SHOW COLUMNS FROM righ_ddt LIKE '%lotto%' OR SHOW COLUMNS FROM righ_ddt LIKE '%matricola%'")
-        columns = cursor.fetchall()
-        has_lotto = any('lotto' in str(col).lower() for col in columns)
-        has_matricola = any('matricola' in str(col).lower() for col in columns)
+        cursor.execute("SHOW COLUMNS FROM righ_ddt")
+        all_columns = [col[0] for col in cursor.fetchall()]
         
-        logger.info(f"📋 Colonne seriale disponibili: lotto={has_lotto}, matricola={has_matricola}")
+        has_lotto = 'lotto' in all_columns
+        has_matricola = 'matricola' in all_columns
+        
+        logger.info(f"📋 Colonne disponibili in righ_ddt: {', '.join(all_columns)}")
+        logger.info(f"📋 Colonne seriale: lotto={has_lotto}, matricola={has_matricola}")
         
         # Query base
         base_columns = """id_padre, serie, numero, anno, riga, data, codice_articolo, descrizione,

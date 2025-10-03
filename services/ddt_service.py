@@ -23,7 +23,7 @@ def get_or_create_cliente(order: Dict, db_config: Dict) -> int:
         conn = mysql.connector.connect(**db_config)
         cursor = conn.cursor()
         
-        logger.info(f"🔍 Ricerca cliente: nome='{order['customer_name']}', email='{order['customer_email']}'")
+        logger.info(f"Ricerca cliente: nome='{order['customer_name']}', email='{order['customer_email']}'")
         
         name_parts = order['customer_name'].split(maxsplit=1)
         nome = name_parts[0] if name_parts else 'Cliente'
@@ -31,29 +31,23 @@ def get_or_create_cliente(order: Dict, db_config: Dict) -> int:
         
         if order['customer_email']:
             query = "SELECT * FROM clie_forn WHERE email = %s LIMIT 1"
-            logger.info(f"📧 Query ricerca per email: {query} | email={order['customer_email']}")
             cursor.execute(query, (order['customer_email'],))
             result = cursor.fetchone()
             if result:
                 cliente_id = result[0]
-                logger.info(f"✓ Cliente trovato per email: ID {cliente_id}")
+                logger.info(f"Cliente trovato per email: ID {cliente_id}")
                 cursor.close()
                 conn.close()
                 return cliente_id
-            else:
-                logger.info(f"✗ Nessun cliente trovato per email {order['customer_email']}")
         
         query = "SELECT * FROM clie_forn WHERE ragione_sociale = %s LIMIT 1"
-        logger.info(f"👤 Query ricerca per nome: {query} | nome={order['customer_name']}")
         cursor.execute(query, (order['customer_name'],))
         result = cursor.fetchone()
         
         if result:
             cliente_id = result[0]
-            logger.info(f"✓ Cliente trovato per nome: ID {cliente_id}")
+            logger.info(f"Cliente trovato per nome: ID {cliente_id}")
         else:
-            logger.info(f"✗ Nessun cliente trovato, procedo con creazione nuovo cliente")
-            
             insert_query = """
             INSERT INTO clie_forn 
             (ragione_sociale, nome, cognome, indirizzo, cap, localita, 
@@ -62,13 +56,6 @@ def get_or_create_cliente(order: Dict, db_config: Dict) -> int:
             """
             
             paese = order['country'][:2].upper() if order['country'] else 'IT'
-            
-            logger.info(f"📝 Preparazione INSERT nuovo cliente:")
-            logger.info(f"   - ragione_sociale: {order['customer_name'][:100]}")
-            logger.info(f"   - nome: {nome[:50]}")
-            logger.info(f"   - cognome: {cognome[:50]}")
-            logger.info(f"   - email: {order['customer_email'][:100] if order['customer_email'] else 'N/A'}")
-            logger.info(f"   - paese: {paese}")
             
             values = (
                 order['customer_name'][:100],
@@ -86,19 +73,17 @@ def get_or_create_cliente(order: Dict, db_config: Dict) -> int:
             cursor.execute(insert_query, values)
             conn.commit()
             cliente_id = cursor.lastrowid
-            logger.info(f"✓ Nuovo cliente creato con successo: ID {cliente_id} - {order['customer_name']}")
+            logger.info(f"Nuovo cliente creato: ID {cliente_id} - {order['customer_name']}")
         
         cursor.close()
         conn.close()
         return cliente_id
         
     except mysql.connector.Error as e:
-        logger.error(f"❌ Errore MySQL get_or_create_cliente: {e}")
-        logger.error(f"   Query fallita, ritorno cliente ID=1 di default")
+        logger.error(f"Errore MySQL get_or_create_cliente: {e}")
         return 1
     except Exception as e:
-        logger.error(f"❌ Errore generico get_or_create_cliente: {e}")
-        logger.error(f"   Ritorno cliente ID=1 di default")
+        logger.error(f"Errore generico get_or_create_cliente: {e}")
         return 1
 
 
@@ -108,7 +93,6 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
         conn = mysql.connector.connect(**db_config)
         cursor = conn.cursor()
         
-        # Recupera il prossimo numero DDT progressivo
         query_num = """
         SELECT MAX(numero) as max_num 
         FROM test_ddt 
@@ -122,11 +106,8 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
         cliente_id = get_or_create_cliente(order, db_config)
         
         note_regime = "Operazione soggetta al regime speciale\nex art. 36 e successivi ( art. 38 D.L. 41/1995)"
-        
-        # Metodo pagamento dal mapping
         payment_method = PAYMENT_METHODS.get(order['source'], 'MARKETPLACE')
         
-        # Inserisci testata DDT
         query_header = """
         INSERT INTO test_ddt 
         (serie, numero, anno, cliente, data, pagamento, note, 
@@ -165,35 +146,14 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
         cursor.execute(query_header, values_header)
         ddt_id = cursor.lastrowid
         
-        # Verifica quali colonne esistono in righ_ddt
-        cursor.execute("SHOW COLUMNS FROM righ_ddt")
-        all_columns = [col[0] for col in cursor.fetchall()]
-        
-        has_lotto = 'lotto' in all_columns
-        has_matricola = 'matricola' in all_columns
-        
-        logger.info(f"📋 Colonne disponibili in righ_ddt: {', '.join(all_columns)}")
-        logger.info(f"📋 Colonne seriale: lotto={has_lotto}, matricola={has_matricola}")
-        
-        # Query base
-        base_columns = """id_padre, serie, numero, anno, riga, data, codice_articolo, descrizione,
+        query_lines = """
+        INSERT INTO righ_ddt
+        (id_padre, serie, numero, anno, riga, data, codice_articolo, descrizione,
          um, quantita, prezzo, iva, sconto1, sconto2, stato, is_descrizione,
          prezzo_ivato, totale_ivato, totale_imponibile, prezzo_netto_unitario, 
-         prezzo_ivato_netto_unitario, prezzo_netto_totale, prezzo_ivato_netto_totale"""
-        
-        base_placeholders = "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s"
-        
-        # Aggiungi colonna seriale se esiste
-        if has_lotto:
-            query_lines = f"INSERT INTO righ_ddt ({base_columns}, lotto) VALUES ({base_placeholders}, %s)"
-            seriale_column = 'lotto'
-        elif has_matricola:
-            query_lines = f"INSERT INTO righ_ddt ({base_columns}, matricola) VALUES ({base_placeholders}, %s)"
-            seriale_column = 'matricola'
-        else:
-            query_lines = f"INSERT INTO righ_ddt ({base_columns}) VALUES ({base_placeholders})"
-            seriale_column = None
-            logger.warning("⚠ Nessuna colonna seriale trovata in righ_ddt - lo scarico magazzino potrebbe non funzionare")
+         prezzo_ivato_netto_unitario, prezzo_netto_totale, prezzo_ivato_netto_totale)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
         
         for idx, item in enumerate(order['items'], start=1):
             prezzo_unitario = float(order['total']) / len(order['items'])
@@ -201,11 +161,11 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
             
             seriale = str(item['sku']).strip()
             
-            logger.info(f"🔍 Ricerca prodotto per seriale: {seriale}")
+            logger.info(f"Ricerca prodotto per seriale/lotto: {seriale}")
             
-            # Cerca il seriale in movimenti_magazzino
+            # Cerca seriale in movimenti_magazzino (colonna matricola O lotto)
             cursor.execute("""
-                SELECT articolo 
+                SELECT articolo, matricola, lotto 
                 FROM movimenti_magazzino 
                 WHERE matricola = %s OR lotto = %s
                 ORDER BY id DESC 
@@ -216,25 +176,37 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
             
             if movimento_result:
                 codice_articolo = movimento_result[0]
-                logger.info(f"✓ Seriale {seriale} → Codice articolo: {codice_articolo}")
+                matricola_db = movimento_result[1]
+                lotto_db = movimento_result[2]
+                
+                logger.info(f"Seriale {seriale} mappato a codice articolo: {codice_articolo}")
                 
                 cursor.execute("SELECT codice, descrizione FROM articoli WHERE codice = %s LIMIT 1", (codice_articolo,))
                 articolo_result = cursor.fetchone()
                 
                 if articolo_result:
-                    logger.info(f"✓ Prodotto {codice_articolo} trovato in magazzino - scarico automatico attivo")
-                    descrizione_pulita = articolo_result[1][:200] if articolo_result[1] else item['name'][:200]
+                    logger.info(f"Prodotto {codice_articolo} trovato in magazzino - scarico automatico attivo")
+                    base_description = articolo_result[1] if articolo_result[1] else item['name']
+                    
+                    # Costruisci descrizione con seriale e/o lotto
+                    desc_parts = [base_description]
+                    if matricola_db:
+                        desc_parts.append(f"S/N:{matricola_db}")
+                    if lotto_db:
+                        desc_parts.append(f"Lotto: {lotto_db}")
+                    
+                    descrizione_pulita = " - ".join(desc_parts)[:200]
+                    logger.info(f"Descrizione completa: {descrizione_pulita}")
                 else:
-                    logger.warning(f"⚠ Codice articolo {codice_articolo} non esiste in tabella articoli")
-                    descrizione_pulita = item['name'][:200]
+                    logger.warning(f"Codice articolo {codice_articolo} non trovato in tabella articoli")
+                    descrizione_pulita = f"{item['name']} S/N:{seriale}"[:200]
             else:
-                logger.warning(f"✗ Seriale {seriale} NON trovato in movimenti_magazzino")
-                logger.warning(f"   Per collegarlo, registra prima il prodotto in magazzino con seriale {seriale}")
+                logger.warning(f"Seriale {seriale} NON trovato in movimenti_magazzino")
+                logger.warning(f"Per collegarlo, carica prima il prodotto in magazzino con matricola o lotto={seriale}")
                 codice_articolo = seriale
-                descrizione_pulita = item['name'][:200]
+                descrizione_pulita = f"{item['name']} S/N:{seriale}"[:200]
             
-            # Valori base
-            values_line = [
+            values_line = (
                 ddt_id,
                 '',
                 ddt_number,
@@ -258,25 +230,19 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                 prezzo_unitario,
                 prezzo_unitario * qta,
                 prezzo_unitario * qta
-            ]
-            
-            # Aggiungi seriale se la colonna esiste
-            if seriale_column:
-                values_line.append(seriale)
-                logger.info(f"📦 Aggiunto seriale {seriale} nella colonna {seriale_column}")
-            
-            cursor.execute(query_lines, tuple(values_line))
+            )
+            cursor.execute(query_lines, values_line)
         
         conn.commit()
         cursor.close()
         conn.close()
         
         ddt_number_formatted = str(ddt_number).zfill(4)
-        logger.info(f"✅ DDT {ddt_number_formatted}/{datetime.now().year} creato con successo")
-        logger.info(f"   - ID DDT: {ddt_id}")
-        logger.info(f"   - Cliente ID: {cliente_id}")
-        logger.info(f"   - Metodo pagamento: {payment_method}")
-        logger.info(f"   - Righe prodotto: {len(order['items'])}")
+        logger.info(f"DDT {ddt_number_formatted}/{datetime.now().year} creato con successo")
+        logger.info(f"  - ID DDT: {ddt_id}")
+        logger.info(f"  - Cliente ID: {cliente_id}")
+        logger.info(f"  - Metodo pagamento: {payment_method}")
+        logger.info(f"  - Righe prodotto: {len(order['items'])}")
         return ddt_number_formatted
         
     except mysql.connector.Error as e:

@@ -260,27 +260,29 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                 # Crea movimento di scarico magazzino
                 query_movimento = """
                 INSERT INTO movimenti_magazzino
-                (data, causale, deposito, articolo, quantita, da_tabella, da_serie, da_numero, da_anno, matricola, da_id, lotto)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (data, causale, deposito, articolo, quantita, da_tabella, da_serie, da_numero, da_anno, matricola, da_id, lotto, da_tipo_fattura, da_id_riga)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 
                 values_movimento = (
                     datetime.now().date(),
-                    3,  # causale 3 = vendita
-                    0,  # deposito principale
+                    3,
+                    0,
                     codice_articolo,
-                    1.00000,  # quantità sempre positiva
+                    1.00000,
                     'test_ddt',
-                    ddt_number,
-                    2025,
+                    None,  # da_serie = NULL
+                    ddt_number,  # da_numero = numero DDT
                     datetime.now().year,
                     matricola_db if matricola_db else '',
                     ddt_id,
-                    lotto_db if lotto_db else None
+                    lotto_db if lotto_db else None,
+                    1,  # da_tipo_fattura = 1
+                    riga_ddt_id  # da_id_riga = ID riga DDT
                 )
                 
                 cursor.execute(query_movimento, values_movimento)
-                logger.info(f"Movimento scarico creato per {codice_articolo} (matricola={matricola_db})")
+                logger.info(f"Movimento scarico creato per {codice_articolo}")
         
         conn.commit()
         cursor.close()

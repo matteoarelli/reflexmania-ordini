@@ -16,14 +16,17 @@ from config import (
     BACKMARKET_TOKEN, BACKMARKET_BASE_URL,
     REFURBED_TOKEN, REFURBED_BASE_URL,
     OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID,
-    INVOICEX_CONFIG
+    INVOICEX_CONFIG,
+    INVOICEX_API_URL, INVOICEX_API_KEY
 )
 from clients import BackMarketClient, RefurbishedClient, OctopiaClient
+from clients.invoicex_api import InvoiceXAPIClient
 from services import (
     get_pending_orders, 
     disable_product_on_channels,
     create_ddt_invoicex
 )
+from services.ddt_service import DDTService
 
 # Configurazione logging
 logging.basicConfig(level=logging.INFO)
@@ -31,10 +34,19 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Inizializza clients
+# Inizializza clients marketplace
 bm_client = BackMarketClient(BACKMARKET_TOKEN, BACKMARKET_BASE_URL)
 rf_client = RefurbishedClient(REFURBED_TOKEN, REFURBED_BASE_URL)
 oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)
+
+# Inizializza InvoiceX API client
+invoicex_api_client = InvoiceXAPIClient(
+    base_url=INVOICEX_API_URL,
+    api_key=INVOICEX_API_KEY
+)
+
+# Inizializza DDT Service
+ddt_service = DDTService(invoicex_api_client)
 
 
 @app.route('/')

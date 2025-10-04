@@ -24,3 +24,7 @@ INVOICEX_CONFIG = {
     'host': os.getenv('INVOICEX_HOST', 'nl1-ts3.a2hosting.com'),
     'database': os.getenv('INVOICEX_DB', 'ilblogdi_invoicex2021'),
 }
+
+# InvoiceX API (esterne) - FUORI dal dict INVOICEX_CONFIG
+INVOICEX_API_URL = 'https://api.reflexmania.it/'
+INVOICEX_API_KEY = '52bf3c1f206dae8e45bf647cda396172'

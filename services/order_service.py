@@ -14,14 +14,25 @@ def normalize_order(order: Dict, source: str) -> Dict:
     if source == 'backmarket':
         shipping = order.get('shipping_address', {})
         items = []
+        
+        # Estrai items con prezzo
         for item in order.get('orderlines', []):
             sku = item.get('serial_number') or item.get('listing', '')
             items.append({
                 'sku': sku,
                 'listing_id': item.get('listing', ''),
                 'name': item.get('product', 'N/A'),
-                'quantity': item.get('quantity', 1)
+                'quantity': item.get('quantity', 1),
+                'price': float(item.get('price', 0))  # AGGIUNTO
             })
+        
+        # Cerca email in più posti
+        customer_email = (
+            order.get('customer_email') or 
+            order.get('email') or
+            shipping.get('email') or
+            ''
+        )
         
         return {
             'order_id': str(order.get('order_id')),
@@ -29,7 +40,7 @@ def normalize_order(order: Dict, source: str) -> Dict:
             'status': order.get('state', 'unknown'),
             'date': order.get('date_creation', ''),
             'customer_name': f"{shipping.get('first_name', '')} {shipping.get('last_name', '')}".strip(),
-            'customer_email': shipping.get('email', ''),
+            'customer_email': customer_email,
             'customer_phone': shipping.get('phone', ''),
             'address': f"{shipping.get('street', '')} {shipping.get('street2', '')}".strip(),
             'city': shipping.get('city', ''),
@@ -64,7 +75,8 @@ def normalize_order(order: Dict, source: str) -> Dict:
             items.append({
                 'sku': sku,
                 'name': item_name,
-                'quantity': item.get('quantity', 1)
+                'quantity': item.get('quantity', 1),
+                'price': float(item.get('price', 0))  # AGGIUNTO
             })
         
         order_date = (
@@ -102,7 +114,8 @@ def normalize_order(order: Dict, source: str) -> Dict:
             items.append({
                 'sku': offer.get('sellerProductId', ''),
                 'name': offer.get('productTitle', 'N/A'),
-                'quantity': line.get('quantity', 1)
+                'quantity': line.get('quantity', 1),
+                'price': float(line.get('price', {}).get('amount', 0))  # AGGIUNTO
             })
         
         return {
@@ -189,7 +202,6 @@ def disable_product_on_channels(sku: str, listing_id: str, bm_client, rf_client,
     
     try:
         results['backmarket']['attempted'] = True
-        # Usa listing_id se disponibile, altrimenti SKU
         id_to_disable = listing_id if listing_id else sku
         success = bm_client.disable_listing(id_to_disable)
         results['backmarket']['success'] = success

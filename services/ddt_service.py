@@ -34,10 +34,15 @@ class DDTService:
                 f"Creazione DDT per ordine {ordine.get('order_id')} da {marketplace}"
             )
             
+            # Debug: stampa l'ordine
+            self.logger.info(f"Ordine ricevuto: email={ordine.get('customer_email')}, items={len(ordine.get('items', []))}")
+            
             # 1. Estrai dati cliente
             cliente = self._estrai_dati_cliente(ordine, marketplace)
             if not cliente or not cliente.get('email'):
-                return {'success': False, 'error': 'Dati cliente mancanti'}
+                return {'success': False, 'error': 'Dati cliente mancanti o email invalida'}
+            
+            self.logger.info(f"Cliente estratto: {cliente['email']}, nome={cliente.get('firstname')} {cliente.get('lastname')}")
             
             # 2. Assicura cliente esista
             codice_cliente = self.api.assicura_cliente_esista(cliente)
@@ -55,41 +60,28 @@ class DDTService:
             
             self.logger.info(f"DDT creato: {id_ddt}")
             
-            # 4. Movimenta prodotti - COMPATIBILITÀ con 'items' o 'products'
-            prodotti = ordine.get('products') or ordine.get('items', [])
+            # 4. Movimenta prodotti
+            prodotti = ordine.get('items', [])
             if not prodotti:
-                self.logger.error(f"Nessun prodotto trovato nell'ordine. Keys disponibili: {ordine.keys()}")
                 return {'success': False, 'error': 'Nessun prodotto nell\'ordine'}
             
             prodotti_ok = []
             prodotti_errore = []
             
             for idx, prodotto in enumerate(prodotti, start=2):
-                # Estrai seriale - può essere in 'serial', 'sku', o 'serial_number'
-                seriale = (
-                    prodotto.get('serial') or 
-                    prodotto.get('serial_number') or
-                    prodotto.get('sku', '')
-                )
-                
-                # Estrai prezzo - può essere 'price' o calcolato
+                seriale = prodotto.get('sku', '')
                 prezzo = float(prodotto.get('price', 0))
                 
-                self.logger.info(f"Processando prodotto riga {idx}: seriale={seriale}, prezzo={prezzo}")
+                self.logger.info(f"Prodotto riga {idx}: sku={seriale}, prezzo={prezzo}")
                 
                 if not seriale:
-                    self.logger.warning(f"Prodotto senza seriale alla riga {idx}")
                     prodotti_errore.append(f"Riga {idx} - seriale mancante")
                     continue
                 
                 if self.api.movimenta_prodotto_ddt(id_ddt, seriale, prezzo, idx):
                     prodotti_ok.append(seriale)
-                    self.logger.info(f"✓ Prodotto {seriale} movimentato")
                 else:
                     prodotti_errore.append(seriale)
-                    self.logger.warning(f"✗ Prodotto {seriale} NON movimentato")
-            
-            tutti_ok = len(prodotti_errore) == 0
             
             return {
                 'success': True,
@@ -97,7 +89,7 @@ class DDTService:
                 'codice_cliente': codice_cliente,
                 'prodotti_ok': prodotti_ok,
                 'prodotti_errore': prodotti_errore,
-                'warning': None if tutti_ok else 'Alcuni prodotti non movimentati'
+                'warning': None if not prodotti_errore else 'Alcuni prodotti non movimentati'
             }
             
         except Exception as e:
@@ -105,75 +97,20 @@ class DDTService:
             return {'success': False, 'error': str(e)}
     
     def _estrai_dati_cliente(self, ordine: Dict, marketplace: str) -> Dict:
-        """Estrae dati cliente da ordine marketplace"""
+        """Estrae dati cliente da ordine già normalizzato"""
         
-        # Usa direttamente i campi già normalizzati da normalize_order
-        if 'customer_email' in ordine:
-            # Ordine già normalizzato da order_service.normalize_order
-            name_parts = ordine.get('customer_name', '').split()
-            firstname = name_parts[0] if name_parts else ''
-            lastname = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
-            
-            return {
-                'email': ordine.get('customer_email', ''),
-                'firstname': firstname,
-                'lastname': lastname,
-                'street': ordine.get('address', ''),
-                'postcode': ordine.get('postal_code', ''),
-                'city': ordine.get('city', ''),
-                'region': ordine.get('country', ''),
-                'telephone': ordine.get('customer_phone', '')
-            }
+        # Gli ordini sono già normalizzati da order_service
+        name_parts = ordine.get('customer_name', '').split()
+        firstname = name_parts[0] if name_parts else ''
+        lastname = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
         
-        # Fallback per strutture non normalizzate (non dovrebbe mai essere usato)
-        if marketplace == 'backmarket':
-            shipping = ordine.get('shipping_address', {})
-            return {
-                'email': ordine.get('customer_email') or f"{ordine.get('order_id', 'unknown')}@backmarket.local",
-                'firstname': shipping.get('first_name', ''),
-                'lastname': shipping.get('last_name', ''),
-                'street': shipping.get('street', ''),
-                'postcode': shipping.get('zip_code', ''),
-                'city': shipping.get('city', ''),
-                'region': shipping.get('state') or shipping.get('country', ''),
-                'telephone': shipping.get('phone', '')
-            }
-        
-        elif marketplace == 'refurbed':
-            return {
-                'email': ordine.get('email') or f"{ordine.get('id', 'unknown')}@refurbed.local",
-                'firstname': ordine.get('shipping_first_name', ''),
-                'lastname': ordine.get('shipping_last_name', ''),
-                'street': ordine.get('shipping_street', ''),
-                'postcode': ordine.get('shipping_zip', ''),
-                'city': ordine.get('shipping_city', ''),
-                'region': ordine.get('shipping_country', ''),
-                'telephone': ordine.get('shipping_phone', '')
-            }
-        
-        elif marketplace == 'cdiscount':
-            return {
-                'email': ordine.get('BuyerEmail') or f"{ordine.get('OrderNumber', 'unknown')}@cdiscount.local",
-                'firstname': ordine.get('ShippingFirstName', ''),
-                'lastname': ordine.get('ShippingLastName', ''),
-                'street': ordine.get('ShippingAddress1', ''),
-                'postcode': ordine.get('ShippingZipCode', ''),
-                'city': ordine.get('ShippingCity', ''),
-                'region': ordine.get('ShippingCountry', ''),
-                'telephone': ordine.get('ShippingPhone', '')
-            }
-        
-        elif marketplace == 'magento':
-            shipping = ordine.get('shipping_address', {})
-            return {
-                'email': ordine.get('customer_email', ''),
-                'firstname': shipping.get('first_name', ''),
-                'lastname': shipping.get('last_name', ''),
-                'street': shipping.get('street', ''),
-                'postcode': shipping.get('zip_code', ''),
-                'city': shipping.get('city', ''),
-                'region': shipping.get('state') or shipping.get('country', ''),
-                'telephone': shipping.get('phone', '')
-            }
-        
-        return {}
+        return {
+            'email': ordine.get('customer_email', ''),
+            'firstname': firstname,
+            'lastname': lastname,
+            'street': ordine.get('address', ''),
+            'postcode': ordine.get('postal_code', ''),
+            'city': ordine.get('city', ''),
+            'region': ordine.get('country', ''),
+            'telephone': ordine.get('customer_phone', '')
+        }

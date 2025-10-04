@@ -459,8 +459,8 @@ def api_create_ddt_only():
             for item in order['items']:
                 disable_product_on_channels(item['sku'], '', bm_client, rf_client, oct_client)
             
-            # Crea DDT
-            result = ddt_service.create_ddt_from_order(order)
+            # Crea DDT - usa metodo marketplace con channel 'magento'
+            result = ddt_service.crea_ddt_da_ordine_marketplace(order, 'magento')
             if not result['success']:
                 return jsonify({'success': False, 'error': result.get('error', 'Errore creazione DDT')}), 500
             

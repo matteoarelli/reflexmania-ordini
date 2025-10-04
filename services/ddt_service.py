@@ -148,11 +148,12 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
         
         query_lines = """
         INSERT INTO righ_ddt
-        (id_padre, serie, numero, anno, riga, data, codice_articolo, descrizione,
+        (id_padre, serie, numero, anno, riga, codice_articolo, descrizione,
          um, quantita, prezzo, iva, sconto1, sconto2, stato, is_descrizione,
          prezzo_ivato, totale_ivato, totale_imponibile, prezzo_netto_unitario, 
-         prezzo_ivato_netto_unitario, prezzo_netto_totale, prezzo_ivato_netto_totale)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+         prezzo_ivato_netto_unitario, prezzo_netto_totale, prezzo_ivato_netto_totale,
+         provvigione, iva_deducibile, arrotondamento_tipo)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         
         for idx, item in enumerate(order['items'], start=1):
@@ -213,7 +214,6 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                 ddt_number,
                 datetime.now().year,
                 idx,
-                datetime.now().date(),
                 codice_articolo,
                 descrizione_pulita,
                 '',
@@ -230,7 +230,10 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                 prezzo_unitario,
                 prezzo_unitario,
                 prezzo_unitario * qta,
-                prezzo_unitario * qta
+                prezzo_unitario * qta,
+                0.00,  # provvigione
+                0.00,  # iva_deducibile
+                'Inf'  # arrotondamento_tipo
             )
             cursor.execute(query_lines, values_line)
             riga_ddt_id = cursor.lastrowid
@@ -238,6 +241,7 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
             # Inserisci seriali nelle tabelle apposite
             if movimento_result and (matricola_db or lotto_db):
                 if lotto_db:
+                    # Lotti: popola tutte le colonne
                     query_lotto = """
                     INSERT INTO righ_ddt_lotti
                     (id_padre, lotto, codice_articolo, qta, matricola)
@@ -248,12 +252,13 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                     logger.info(f"Inserito in righ_ddt_lotti: lotto={lotto_db}")
                 
                 elif matricola_db:
+                    # Matricole: solo matricola, id, id_padre_righe
                     query_matricola = """
                     INSERT INTO righ_ddt_matricole
-                    (serie_old, numero_old, anno_old, riga_old, matricola, id_padre_righe)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    (matricola, id_padre_righe)
+                    VALUES (%s, %s)
                     """
-                    values_matricola = ('', ddt_number, datetime.now().year, idx, matricola_db, riga_ddt_id)
+                    values_matricola = (matricola_db, riga_ddt_id)
                     cursor.execute(query_matricola, values_matricola)
                     logger.info(f"Inserito in righ_ddt_matricole: matricola={matricola_db}")
                 
@@ -271,14 +276,14 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                     codice_articolo,
                     1.00000,
                     'test_ddt',
-                    None,  # da_serie = NULL
-                    ddt_number,  # da_numero = numero DDT
+                    None,
+                    ddt_number,
                     datetime.now().year,
                     matricola_db if matricola_db else '',
                     ddt_id,
                     lotto_db if lotto_db else None,
-                    1,  # da_tipo_fattura = 1
-                    riga_ddt_id  # da_id_riga = ID riga DDT
+                    1,
+                    riga_ddt_id
                 )
                 
                 cursor.execute(query_movimento, values_movimento)

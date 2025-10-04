@@ -184,7 +184,7 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                 articolo_result = cursor.fetchone()
                 
                 if articolo_result:
-                    logger.info(f"Prodotto {codice_articolo} trovato in magazzino - scarico automatico attivo")
+                    logger.info(f"Prodotto {codice_articolo} trovato in magazzino")
                     base_description = articolo_result[1] if articolo_result[1] else item['name']
                     
                     if matricola_db and lotto_db:
@@ -196,9 +196,9 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                     else:
                         descrizione_pulita = base_description[:200]
                     
-                    logger.info(f"Descrizione completa: {descrizione_pulita}")
+                    logger.info(f"Descrizione: {descrizione_pulita}")
                 else:
-                    logger.warning(f"Codice articolo {codice_articolo} non trovato in tabella articoli")
+                    logger.warning(f"Codice articolo {codice_articolo} non in tabella articoli")
                     descrizione_pulita = f"{item['name']}S/N: {seriale}"[:200]
             else:
                 logger.warning(f"Seriale {seriale} NON trovato in movimenti_magazzino")
@@ -235,55 +235,59 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
             cursor.execute(query_lines, values_line)
             riga_ddt_id = cursor.lastrowid
             
-            # Inserisci nella tabella corretta per lo scarico magazzino
+            # Inserisci seriali nelle tabelle apposite
             if movimento_result and (matricola_db or lotto_db):
                 if lotto_db:
-                    # Prodotti con lotto → righ_ddt_lotti
                     query_lotto = """
                     INSERT INTO righ_ddt_lotti
                     (id_padre, lotto, codice_articolo, qta, matricola)
                     VALUES (%s, %s, %s, %s, %s)
                     """
-                    
-                    values_lotto = (
-                        riga_ddt_id,
-                        lotto_db,
-                        codice_articolo,
-                        qta,
-                        matricola_db if matricola_db else ''
-                    )
-                    
+                    values_lotto = (riga_ddt_id, lotto_db, codice_articolo, qta, matricola_db if matricola_db else '')
                     cursor.execute(query_lotto, values_lotto)
-                    logger.info(f"Inserito in righ_ddt_lotti: matricola={matricola_db}, lotto={lotto_db}")
+                    logger.info(f"Inserito in righ_ddt_lotti: lotto={lotto_db}")
                 
                 elif matricola_db:
-                    # Prodotti solo con matricola → righ_ddt_matricole
                     query_matricola = """
                     INSERT INTO righ_ddt_matricole
                     (serie_old, numero_old, anno_old, riga_old, matricola, id_padre_righe)
                     VALUES (%s, %s, %s, %s, %s, %s)
                     """
-                    
-                    values_matricola = (
-                        '',
-                        ddt_number,
-                        datetime.now().year,
-                        idx,
-                        matricola_db,
-                        riga_ddt_id
-                    )
-                    
+                    values_matricola = ('', ddt_number, datetime.now().year, idx, matricola_db, riga_ddt_id)
                     cursor.execute(query_matricola, values_matricola)
                     logger.info(f"Inserito in righ_ddt_matricole: matricola={matricola_db}")
+                
+                # Crea movimento di scarico magazzino
+                query_movimento = """
+                INSERT INTO movimenti_magazzino
+                (data, causale, deposito, articolo, quantita, da_tabella, da_serie, da_numero, da_anno, matricola, da_id, lotto)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """
+                
+                values_movimento = (
+                    datetime.now().date(),
+                    3,  # causale 3 = vendita
+                    0,  # deposito principale
+                    codice_articolo,
+                    1.00000,  # quantità sempre positiva
+                    'test_ddt',
+                    ddt_number,
+                    2025,
+                    datetime.now().year,
+                    matricola_db if matricola_db else '',
+                    ddt_id,
+                    lotto_db if lotto_db else None
+                )
+                
+                cursor.execute(query_movimento, values_movimento)
+                logger.info(f"Movimento scarico creato per {codice_articolo} (matricola={matricola_db})")
         
         conn.commit()
         cursor.close()
         conn.close()
         
         ddt_number_formatted = str(ddt_number).zfill(4)
-        logger.info(f"DDT {ddt_number_formatted}/{datetime.now().year} creato")
-        logger.info(f"  - Cliente ID: {cliente_id}")
-        logger.info(f"  - Pagamento: {payment_method}")
+        logger.info(f"DDT {ddt_number_formatted}/{datetime.now().year} creato con successo")
         return ddt_number_formatted
         
     except mysql.connector.Error as e:

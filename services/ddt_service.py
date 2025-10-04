@@ -196,8 +196,6 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                         descrizione_pulita = f"{base_description}Lotto: {lotto_db}"[:200]
                     else:
                         descrizione_pulita = base_description[:200]
-                    
-                    logger.info(f"Descrizione: {descrizione_pulita}")
                 else:
                     logger.warning(f"Codice articolo {codice_articolo} non in tabella articoli")
                     descrizione_pulita = f"{item['name']}S/N: {seriale}"[:200]
@@ -231,9 +229,9 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                 prezzo_unitario,
                 prezzo_unitario * qta,
                 prezzo_unitario * qta,
-                0.00,  # provvigione
-                0.00,  # iva_deducibile
-                'Inf'  # arrotondamento_tipo
+                0.00,
+                0.00,
+                'Inf'
             )
             cursor.execute(query_lines, values_line)
             riga_ddt_id = cursor.lastrowid
@@ -241,7 +239,6 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
             # Inserisci seriali nelle tabelle apposite
             if movimento_result and (matricola_db or lotto_db):
                 if lotto_db:
-                    # Lotti: popola tutte le colonne
                     query_lotto = """
                     INSERT INTO righ_ddt_lotti
                     (id_padre, lotto, codice_articolo, qta, matricola)
@@ -252,7 +249,6 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                     logger.info(f"Inserito in righ_ddt_lotti: lotto={lotto_db}")
                 
                 elif matricola_db:
-                    # Matricole: solo matricola, id, id_padre_righe
                     query_matricola = """
                     INSERT INTO righ_ddt_matricole
                     (matricola, id_padre_righe)
@@ -261,40 +257,13 @@ def create_ddt_invoicex(order: Dict, db_config: Dict) -> Optional[str]:
                     values_matricola = (matricola_db, riga_ddt_id)
                     cursor.execute(query_matricola, values_matricola)
                     logger.info(f"Inserito in righ_ddt_matricole: matricola={matricola_db}")
-                
-                # Crea movimento di scarico magazzino
-                query_movimento = """
-                INSERT INTO movimenti_magazzino
-                (data, causale, deposito, articolo, quantita, da_tabella, da_serie, da_numero, da_anno, matricola, da_id, lotto, da_tipo_fattura, da_id_riga)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """
-                
-                values_movimento = (
-                    datetime.now().date(),
-                    3,
-                    0,
-                    codice_articolo,
-                    1.00000,
-                    'test_ddt',
-                    None,
-                    ddt_number,
-                    datetime.now().year,
-                    matricola_db if matricola_db else '',
-                    ddt_id,
-                    lotto_db if lotto_db else None,
-                    1,
-                    riga_ddt_id
-                )
-                
-                cursor.execute(query_movimento, values_movimento)
-                logger.info(f"Movimento scarico creato per {codice_articolo}")
         
         conn.commit()
         cursor.close()
         conn.close()
         
         ddt_number_formatted = str(ddt_number).zfill(4)
-        logger.info(f"DDT {ddt_number_formatted}/{datetime.now().year} creato con successo")
+        logger.info(f"DDT {ddt_number_formatted}/{datetime.now().year} creato - InvoiceX dovrebbe creare il movimento automaticamente")
         return ddt_number_formatted
         
     except mysql.connector.Error as e:

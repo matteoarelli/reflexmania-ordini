@@ -24,7 +24,6 @@ from clients.invoicex_api import InvoiceXAPIClient
 from services import (
     get_pending_orders, 
     disable_product_on_channels,
-    create_ddt_invoicex
 )
 from services.ddt_service import DDTService
 
@@ -432,9 +431,12 @@ def api_create_ddt_only():
             listing_id = item.get('listing_id', '')
             disable_product_on_channels(item['sku'], listing_id, bm_client, rf_client, oct_client)
         
-        ddt_number = create_ddt_invoicex(order, INVOICEX_CONFIG)
-        if not ddt_number:
-            return jsonify({'success': False, 'error': 'Errore creazione DDT'}), 500
+        # Usa il nuovo sistema API InvoiceX
+        result = ddt_service.crea_ddt_da_ordine_marketplace(order, source.lower())
+        if not result['success']:
+            return jsonify({'success': False, 'error': result.get('error', 'Errore creazione DDT')}), 500
+        
+        ddt_number = result['ddt_id']
         
         return jsonify({
             'success': True,

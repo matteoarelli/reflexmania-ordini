@@ -2,6 +2,7 @@
 """
 Sistema di gestione ordini marketplace per ReflexMania - VERSIONE DASHBOARD
 Deploy su Railway con IP statico
+Supporto: BackMarket, Refurbed, CDiscount, Magento
 """
 
 from flask import Flask, request, jsonify, send_file
@@ -16,16 +17,19 @@ from config import (
     BACKMARKET_TOKEN, BACKMARKET_BASE_URL,
     REFURBED_TOKEN, REFURBED_BASE_URL,
     OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID,
+    MAGENTO_URL, MAGENTO_TOKEN,
     INVOICEX_CONFIG,
     INVOICEX_API_URL, INVOICEX_API_KEY
 )
 from clients import BackMarketClient, RefurbishedClient, OctopiaClient
 from clients.invoicex_api import InvoiceXAPIClient
+from clients.magento_api import MagentoAPIClient
 from services import (
     get_pending_orders, 
     disable_product_on_channels,
 )
 from services.ddt_service import DDTService
+from services.magento_service import MagentoService
 
 # Configurazione logging
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +41,10 @@ app = Flask(__name__)
 bm_client = BackMarketClient(BACKMARKET_TOKEN, BACKMARKET_BASE_URL)
 rf_client = RefurbishedClient(REFURBED_TOKEN, REFURBED_BASE_URL)
 oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)
+
+# Inizializza Magento client
+magento_client = MagentoAPIClient(MAGENTO_URL, MAGENTO_TOKEN)
+magento_service = MagentoService(magento_client)
 
 # Inizializza InvoiceX API client
 invoicex_api_client = InvoiceXAPIClient(
@@ -145,6 +153,7 @@ def dashboard():
             .badge-backmarket { background: #e3f2fd; color: #1976d2; }
             .badge-refurbed { background: #f3e5f5; color: #7b1fa2; }
             .badge-cdiscount { background: #fff3e0; color: #f57c00; }
+            .badge-magento { background: #ffe0e0; color: #c62828; }
             .badge-accepted { background: #d4edda; color: #155724; }
             .badge-pending { background: #fff3cd; color: #856404; }
             
@@ -176,6 +185,10 @@ def dashboard():
                 <div class="stat-card">
                     <h3>CDiscount</h3>
                     <div class="number" id="cd-count">-</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Magento</h3>
+                    <div class="number" id="mg-count">-</div>
                 </div>
             </div>
             
@@ -211,7 +224,7 @@ def dashboard():
             
             function refreshOrders() {
                 document.getElementById('loading').style.display = 'block';
-                fetch('/api/orders')
+                fetch('/api/orders/all')
                     .then(r => r.json())
                     .then(data => {
                         orders = data.orders;
@@ -230,11 +243,13 @@ def dashboard():
                 const bm = orders.filter(o => o.source === 'BackMarket').length;
                 const rf = orders.filter(o => o.source === 'Refurbed').length;
                 const cd = orders.filter(o => o.source === 'CDiscount').length;
+                const mg = orders.filter(o => o.source === 'Magento').length;
                 
                 document.getElementById('pending-count').textContent = orders.length;
                 document.getElementById('bm-count').textContent = bm;
                 document.getElementById('rf-count').textContent = rf;
                 document.getElementById('cd-count').textContent = cd;
+                document.getElementById('mg-count').textContent = mg;
             }
             
             function renderOrders() {
@@ -265,7 +280,10 @@ def dashboard():
                     let actionButtons = '';
                     let statusBadge = '';
                     
-                    if (order.source === 'BackMarket') {
+                    if (order.source === 'Magento') {
+                        actionButtons = `<button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">Crea DDT</button>`;
+                        statusBadge = '<span class="badge badge-pending">Processing</span>';
+                    } else if (order.source === 'BackMarket') {
                         const stateNum = order.status;
                         
                         let packingSlipBtn = '';
@@ -347,9 +365,13 @@ def dashboard():
     return html
 
 
+# ============================================================================
+# API MARKETPLACE (BackMarket, Refurbed, CDiscount)
+# ============================================================================
+
 @app.route('/api/orders')
 def api_orders():
-    """API: ritorna lista ordini pendenti"""
+    """API: ritorna lista ordini pendenti marketplace"""
     try:
         orders = get_pending_orders(bm_client, rf_client, oct_client)
         return jsonify({'orders': orders, 'count': len(orders)})
@@ -374,6 +396,12 @@ def api_mark_shipped():
         if source == 'BackMarket':
             if not bm_client.mark_as_shipped(order_id, tracking_number, tracking_url):
                 return jsonify({'success': False, 'error': 'Errore comunicazione tracking'}), 500
+        
+        # Magento: marca come complete dopo spedizione
+        if source == 'Magento':
+            order = magento_service.get_order_by_id(order_id)
+            if order and order.get('entity_id'):
+                magento_service.mark_order_as_completed(order['entity_id'])
         
         return jsonify({
             'success': True,
@@ -415,12 +443,39 @@ def api_accept_order_only():
 
 @app.route('/api/create_ddt_only', methods=['POST'])
 def api_create_ddt_only():
-    """API: crea solo DDT e disabilita prodotti (senza accettazione ordine)"""
+    """API: crea solo DDT e disabilita prodotti"""
     try:
         data = request.json
         order_id = data.get('order_id')
         source = data.get('source')
         
+        # Gestione Magento
+        if source == 'Magento':
+            order = magento_service.get_order_by_id(order_id)
+            if not order:
+                return jsonify({'success': False, 'error': 'Ordine Magento non trovato'}), 404
+            
+            # Disabilita prodotti
+            for item in order['items']:
+                disable_product_on_channels(item['sku'], '', bm_client, rf_client, oct_client)
+            
+            # Crea DDT
+            result = ddt_service.create_ddt_from_order(order)
+            if not result['success']:
+                return jsonify({'success': False, 'error': result.get('error', 'Errore creazione DDT')}), 500
+            
+            # Marca ordine come completato
+            if order.get('entity_id'):
+                magento_service.mark_order_as_completed(order['entity_id'])
+            
+            return jsonify({
+                'success': True,
+                'ddt_number': result['ddt_number'],
+                'order_id': order_id,
+                'message': 'DDT creato con successo'
+            })
+        
+        # Gestione Marketplace (BackMarket, Refurbed, CDiscount)
         all_orders = get_pending_orders(bm_client, rf_client, oct_client)
         order = next((o for o in all_orders if o['order_id'] == order_id and o['source'] == source), None)
         
@@ -431,7 +486,6 @@ def api_create_ddt_only():
             listing_id = item.get('listing_id', '')
             disable_product_on_channels(item['sku'], listing_id, bm_client, rf_client, oct_client)
         
-        # Usa il nuovo sistema API InvoiceX
         result = ddt_service.crea_ddt_da_ordine_marketplace(order, source.lower())
         if not result['success']:
             return jsonify({'success': False, 'error': result.get('error', 'Errore creazione DDT')}), 500
@@ -454,10 +508,30 @@ def api_create_ddt_only():
 def api_packlink_csv():
     """API: genera CSV Packlink per ordini accettati"""
     try:
-        orders = get_pending_orders(bm_client, rf_client, oct_client)
+        marketplace_orders = get_pending_orders(bm_client, rf_client, oct_client)
+        magento_orders = magento_service.get_all_pending_orders()
+        
+        # Converti ordini Magento nel formato compatibile con CSV
+        magento_converted = []
+        for order in magento_orders:
+            magento_converted.append({
+                'order_id': order['order_id'],
+                'source': 'Magento',
+                'customer_name': f"{order['customer']['name']} {order['customer']['surname']}",
+                'customer_email': order['customer']['email'],
+                'customer_phone': order['customer']['phone'],
+                'address': order['customer']['address'],
+                'postal_code': order['customer']['zip'],
+                'city': order['customer']['city'],
+                'country': order['customer']['country'],
+                'total': order['total'],
+                'items': order['items']
+            })
+        
+        all_orders = marketplace_orders + magento_converted
         
         rows = []
-        for order in orders:
+        for order in all_orders:
             name_parts = order['customer_name'].split()
             first_name = name_parts[0] if name_parts else ''
             last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
@@ -517,9 +591,107 @@ def api_packlink_csv():
         return jsonify({'error': str(e)}), 500
 
 
+# ============================================================================
+# API MAGENTO
+# ============================================================================
+
+@app.route('/api/magento/orders', methods=['GET'])
+def get_magento_orders():
+    """API: recupera ordini Magento in processing"""
+    try:
+        orders = magento_service.get_all_pending_orders()
+        return jsonify({
+            'success': True,
+            'channel': 'magento',
+            'count': len(orders),
+            'orders': orders
+        }), 200
+    except Exception as e:
+        logger.error(f"Errore recupero ordini Magento: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/magento/orders/<order_id>', methods=['GET'])
+def get_magento_order(order_id):
+    """API: recupera dettaglio ordine Magento"""
+    try:
+        order = magento_service.get_order_by_id(order_id)
+        if not order:
+            return jsonify({'success': False, 'error': f'Ordine {order_id} non trovato'}), 404
+        return jsonify({'success': True, 'order': order}), 200
+    except Exception as e:
+        logger.error(f"Errore recupero ordine Magento {order_id}: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============================================================================
+# API UNIFIED DASHBOARD
+# ============================================================================
+
+@app.route('/api/orders/all', methods=['GET'])
+def get_all_orders():
+    """API: recupera TUTTI gli ordini da tutti i canali"""
+    try:
+        # Ordini marketplace
+        marketplace_orders = get_pending_orders(bm_client, rf_client, oct_client)
+        
+        # Ordini Magento - converti nel formato compatibile con la dashboard
+        magento_orders = magento_service.get_all_pending_orders()
+        magento_converted = []
+        
+        for order in magento_orders:
+            magento_converted.append({
+                'order_id': order['order_id'],
+                'source': 'Magento',
+                'customer_name': f"{order['customer']['name']} {order['customer']['surname']}",
+                'customer_email': order['customer']['email'],
+                'customer_phone': order['customer']['phone'],
+                'address': order['customer']['address'],
+                'postal_code': order['customer']['zip'],
+                'city': order['customer']['city'],
+                'country': order['customer']['country'],
+                'total': order['total'],
+                'date': order['order_date'],
+                'status': order['status'],
+                'items': order['items']
+            })
+        
+        all_orders = marketplace_orders + magento_converted
+        
+        return jsonify({
+            'success': True,
+            'total_count': len(all_orders),
+            'orders': all_orders,
+            'channels': {
+                'backmarket': len([o for o in all_orders if o['source'] == 'BackMarket']),
+                'refurbed': len([o for o in all_orders if o['source'] == 'Refurbed']),
+                'cdiscount': len([o for o in all_orders if o['source'] == 'CDiscount']),
+                'magento': len(magento_converted)
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Errore recupero ordini unificati: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============================================================================
+# HEALTH CHECK
+# ============================================================================
+
 @app.route('/health')
 def health():
-    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'services': {
+            'backmarket': 'ok',
+            'refurbed': 'ok',
+            'cdiscount': 'ok',
+            'magento': 'ok',
+            'invoicex': 'ok'
+        }
+    })
 
 
 if __name__ == '__main__':

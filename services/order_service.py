@@ -53,15 +53,10 @@ def normalize_order(order: Dict, source: str) -> Dict:
         }
     
     elif source == 'refurbed':
-        # DEBUG: stampa dati cliente
-        import json
-        logger.info(f"DEBUG REFURBED - shipping_address: {json.dumps(order.get('shipping_address', {}), indent=2)}")
-        logger.info(f"DEBUG REFURBED - order keys: {list(order.keys())}")
-    
         shipping = order.get('shipping_address', {})
         items = []
         
-        # FIX: usa 'items' array per Refurbed
+        # Usa 'items' array
         order_items = order.get('items', [])
         
         for item in order_items:
@@ -80,7 +75,7 @@ def normalize_order(order: Dict, source: str) -> Dict:
                 offer_data = item.get('offer_data', {})
                 sku = offer_data.get('sku', item.get('id', ''))
             
-            # CORRETTO: prezzo da settlement_total_paid
+            # Prezzo da settlement_total_paid
             price = float(item.get('settlement_total_paid', 0))
             
             items.append({
@@ -99,10 +94,10 @@ def normalize_order(order: Dict, source: str) -> Dict:
             ''
         )
         
-        # Email cliente - prova più fonti
+        # Email cliente
         customer_email = (
-            order.get('email') or
             order.get('customer_email') or
+            order.get('email') or
             shipping.get('email') or
             order.get('customer', {}).get('email') or
             ''
@@ -114,10 +109,10 @@ def normalize_order(order: Dict, source: str) -> Dict:
             customer_email = f"refurbed_{order_id}@placeholder.reflexmania.it"
             logger.warning(f"Email mancante per ordine Refurbed {order_id}, usando placeholder")
         
-        # CORRETTO: nome completo da shipping_address
+        # Nome completo da shipping_address con family_name
         first_name = shipping.get('first_name', '')
-        last_name = shipping.get('last_name', '')
-        customer_name = f"{first_name} {last_name}".strip()
+        family_name = shipping.get('family_name', '')
+        customer_name = f"{first_name} {family_name}".strip()
         
         return {
             'order_id': str(order.get('id', '')),
@@ -126,8 +121,8 @@ def normalize_order(order: Dict, source: str) -> Dict:
             'date': order_date,
             'customer_name': customer_name,
             'customer_email': customer_email,
-            'customer_phone': shipping.get('phone', ''),
-            'address': f"{shipping.get('street', '')} {shipping.get('house_no', '')} {shipping.get('supplement', '')}".strip(),
+            'customer_phone': shipping.get('phone_number', ''),
+            'address': f"{shipping.get('street_name', '')} {shipping.get('house_no', '')}".strip(),
             'city': shipping.get('town', ''),
             'postal_code': shipping.get('post_code', ''),
             'country': shipping.get('country_code', ''),
@@ -144,7 +139,7 @@ def normalize_order(order: Dict, source: str) -> Dict:
             shipping = line.get('shippingAddress', {})
             offer = line.get('offer', {})
             
-            # FIX PREZZO CDISCOUNT: prova tutti i campi possibili
+            # Prezzo con fallback multipli
             price_data = line.get('price', {})
             price = float(price_data.get('amount', 0))
             

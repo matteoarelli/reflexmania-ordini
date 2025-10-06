@@ -34,7 +34,6 @@ class DDTService:
                 f"Creazione DDT per ordine {ordine.get('order_id')} da {marketplace}"
             )
             
-            # Debug: stampa l'ordine
             self.logger.info(f"Ordine ricevuto: email={ordine.get('customer_email')}, items={len(ordine.get('items', []))}")
             
             # 1. Estrai dati cliente
@@ -70,13 +69,12 @@ class DDTService:
             prodotti_ok = []
             prodotti_errore = []
             
-            riga = 2  # Inizio riga prodotti
+            riga = 2
             
             for prodotto in prodotti:
                 seriale = prodotto.get('sku', '')
                 prezzo = float(prodotto.get('price', 0))
                 
-                # Se il prezzo è 0, prova altri campi
                 if prezzo == 0:
                     prezzo = float(prodotto.get('unit_price', 0))
                 
@@ -133,9 +131,16 @@ class DDTService:
             }
         
         # Per Marketplace (BackMarket, Refurbed, CDiscount)
-        name_parts = ordine.get('customer_name', '').split()
-        firstname = name_parts[0] if name_parts else ''
-        lastname = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
+        customer_name = ordine.get('customer_name', '')
+        
+        # Split solo al primo spazio
+        if customer_name:
+            name_parts = customer_name.split(' ', 1)
+            firstname = name_parts[0] if name_parts else ''
+            lastname = name_parts[1] if len(name_parts) > 1 else ''
+        else:
+            firstname = ''
+            lastname = ''
         
         return {
             'email': ordine.get('customer_email', ''),
@@ -151,7 +156,6 @@ class DDTService:
     def _prepara_dati_ordine(self, ordine: Dict, marketplace: str) -> Dict:
         """Prepara dati ordine includendo metodo di pagamento"""
         
-        # Mappa marketplace → metodo pagamento
         payment_methods = {
             'backmarket': 'BACKMARKET',
             'refurbed': 'REFURBED',
@@ -170,8 +174,6 @@ class DDTService:
     def _aggiungi_metodo_pagamento(self, ddt_id: str, payment_method: str):
         """Aggiungi metodo di pagamento come nota al DDT"""
         try:
-            # Questa è una chiamata opzionale - se l'API InvoiceX supporta note/metadati
-            # Altrimenti il payment_method è già nel riferimento
             self.logger.info(f"DDT {ddt_id} - Metodo pagamento: {payment_method}")
         except Exception as e:
             self.logger.warning(f"Non è stato possibile aggiungere nota pagamento: {e}")

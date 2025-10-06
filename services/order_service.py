@@ -56,7 +56,7 @@ def normalize_order(order: Dict, source: str) -> Dict:
         shipping = order.get('shipping_address', {})
         items = []
         
-        # CORRETTO: usa 'items' non 'order_items'
+        # FIX: usa 'items' array per Refurbed
         order_items = order.get('items', [])
         
         for item in order_items:

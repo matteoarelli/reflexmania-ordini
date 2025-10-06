@@ -450,30 +450,30 @@ def api_create_ddt_only():
         source = data.get('source')
         
         # Gestione Magento
-if source == 'Magento':
-    order = magento_service.get_order_by_id(order_id)
-    if not order:
-        return jsonify({'success': False, 'error': 'Ordine Magento non trovato'}), 404
-    
-    # Disabilita prodotti
-    for item in order['items']:
-        disable_product_on_channels(item['sku'], '', bm_client, rf_client, oct_client)
-    
-    # Crea DDT
-    result = ddt_service.crea_ddt_da_ordine_marketplace(order, 'magento')
-    if not result['success']:
-        return jsonify({'success': False, 'error': result.get('error', 'Errore creazione DDT')}), 500
-    
-    # Marca ordine come completato
-    if order.get('entity_id'):
-        magento_service.mark_order_as_completed(order['entity_id'])
-    
-    return jsonify({
-        'success': True,
-        'ddt_number': result['ddt_id'],  # FIX: usa 'ddt_id' invece di 'ddt_number'
-        'order_id': order_id,
-        'message': 'DDT creato con successo'
-    })
+        if source == 'Magento':
+            order = magento_service.get_order_by_id(order_id)
+            if not order:
+                return jsonify({'success': False, 'error': 'Ordine Magento non trovato'}), 404
+            
+            # Disabilita prodotti
+            for item in order['items']:
+                disable_product_on_channels(item['sku'], '', bm_client, rf_client, oct_client)
+            
+            # Crea DDT
+            result = ddt_service.crea_ddt_da_ordine_marketplace(order, 'magento')
+            if not result['success']:
+                return jsonify({'success': False, 'error': result.get('error', 'Errore creazione DDT')}), 500
+            
+            # Marca ordine come completato
+            if order.get('entity_id'):
+                magento_service.mark_order_as_completed(order['entity_id'])
+            
+            return jsonify({
+                'success': True,
+                'ddt_number': result['ddt_id'],
+                'order_id': order_id,
+                'message': 'DDT creato con successo'
+            })
         
         # Gestione Marketplace (BackMarket, Refurbed, CDiscount)
         all_orders = get_pending_orders(bm_client, rf_client, oct_client)
@@ -502,7 +502,6 @@ if source == 'Magento':
     except Exception as e:
         logger.error(f"Errore create_ddt_only: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @app.route('/api/packlink_csv')
 def api_packlink_csv():

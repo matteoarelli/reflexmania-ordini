@@ -15,7 +15,6 @@ def normalize_order(order: Dict, source: str) -> Dict:
         shipping = order.get('shipping_address', {})
         items = []
         
-        # Estrai items con prezzo
         for item in order.get('orderlines', []):
             sku = item.get('serial_number') or item.get('listing', '')
             items.append({
@@ -26,7 +25,6 @@ def normalize_order(order: Dict, source: str) -> Dict:
                 'price': float(item.get('price', 0))
             })
         
-        # Cerca email in più posti
         customer_email = (
             order.get('customer_email') or 
             order.get('email') or
@@ -37,6 +35,8 @@ def normalize_order(order: Dict, source: str) -> Dict:
         return {
             'order_id': str(order.get('order_id')),
             'source': 'BackMarket',
+            'channel': 'backmarket',
+            'payment_method': 'backmarket',
             'status': order.get('state', 'unknown'),
             'date': order.get('date_creation', ''),
             'customer_name': f"{shipping.get('first_name', '')} {shipping.get('last_name', '')}".strip(),
@@ -56,11 +56,9 @@ def normalize_order(order: Dict, source: str) -> Dict:
         shipping = order.get('shipping_address', {})
         items = []
         
-        # Usa 'items' array
         order_items = order.get('items', [])
         
         for item in order_items:
-            # Nome prodotto
             item_name = (
                 item.get('name') or 
                 item.get('title') or 
@@ -69,13 +67,11 @@ def normalize_order(order: Dict, source: str) -> Dict:
                 'N/A'
             )
             
-            # SKU
             sku = item.get('sku', '')
             if not sku:
                 offer_data = item.get('offer_data', {})
                 sku = offer_data.get('sku', item.get('id', ''))
             
-            # Prezzo da settlement_total_paid
             price = float(item.get('settlement_total_paid', 0))
             
             items.append({
@@ -85,7 +81,6 @@ def normalize_order(order: Dict, source: str) -> Dict:
                 'price': price
             })
         
-        # Data ordine
         order_date = (
             order.get('released_at') or 
             order.get('created_at') or 
@@ -94,7 +89,6 @@ def normalize_order(order: Dict, source: str) -> Dict:
             ''
         )
         
-        # Email cliente
         customer_email = (
             order.get('customer_email') or
             order.get('email') or
@@ -103,13 +97,11 @@ def normalize_order(order: Dict, source: str) -> Dict:
             ''
         )
         
-        # Se mancante, usa placeholder
         if not customer_email:
             order_id = order.get('id', 'unknown')
             customer_email = f"refurbed_{order_id}@placeholder.reflexmania.it"
             logger.warning(f"Email mancante per ordine Refurbed {order_id}, usando placeholder")
         
-        # Nome completo da shipping_address con family_name
         first_name = shipping.get('first_name', '')
         family_name = shipping.get('family_name', '')
         customer_name = f"{first_name} {family_name}".strip()
@@ -117,6 +109,8 @@ def normalize_order(order: Dict, source: str) -> Dict:
         return {
             'order_id': str(order.get('id', '')),
             'source': 'Refurbed',
+            'channel': 'refurbed',
+            'payment_method': 'refurbed',
             'status': order.get('state', 'NEW'),
             'date': order_date,
             'customer_name': customer_name,
@@ -139,7 +133,6 @@ def normalize_order(order: Dict, source: str) -> Dict:
             shipping = line.get('shippingAddress', {})
             offer = line.get('offer', {})
             
-            # Prezzo con fallback multipli
             price_data = line.get('price', {})
             price = float(price_data.get('amount', 0))
             
@@ -160,6 +153,8 @@ def normalize_order(order: Dict, source: str) -> Dict:
         return {
             'order_id': order.get('orderId'),
             'source': 'CDiscount',
+            'channel': 'cdiscount',
+            'payment_method': 'cdiscount',
             'status': order.get('status', 'unknown'),
             'date': order.get('createdAt', ''),
             'customer_name': f"{shipping.get('firstName', '')} {shipping.get('lastName', '')}".strip(),

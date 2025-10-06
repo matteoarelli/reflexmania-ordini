@@ -7,12 +7,68 @@ from typing import Dict, List, Optional
 import logging
 
 
+# Mappatura metodi pagamento Magento -> InvoiceX
+MAGENTO_PAYMENT_MAP = {
+    'paypal_express': 'PAYPAL',
+    'paypal_standard': 'PAYPAL',
+    'paypal': 'PAYPAL',
+    'checkmo': 'BONIFICO BANCARIO',
+    'banktransfer': 'BONIFICO BANCARIO',
+    'cashondelivery': 'CONTRASSEGNO',
+    'cashondelivery_fee': 'CONTRASSEGNO',
+    'ccsave': 'CARTA DI CREDITO',
+    'authorizenet': 'CARTA DI CREDITO',
+    'stripe': 'CARTA DI CREDITO',
+    'braintree': 'CARTA DI CREDITO',
+    'free': 'PERMUTA',
+}
+
+
 class DDTService:
     """Service per gestione DDT vendita tramite API InvoiceX"""
     
     def __init__(self, api_client: InvoiceXAPIClient):
         self.api = api_client
         self.logger = logging.getLogger(__name__)
+    
+    def _get_invoicex_payment_method(self, ordine: Dict, marketplace: str) -> str:
+        """
+        Determina il metodo di pagamento corretto per InvoiceX
+        
+        Args:
+            ordine: Ordine normalizzato
+            marketplace: Nome marketplace ('backmarket', 'refurbed', 'cdiscount', 'magento')
+        
+        Returns:
+            Codice metodo pagamento InvoiceX
+        """
+        marketplace_lower = marketplace.lower()
+        
+        # Marketplace con metodo fisso
+        if marketplace_lower == 'backmarket':
+            return 'BACKMARKET'
+        elif marketplace_lower == 'refurbed':
+            return 'REFURBED'
+        elif marketplace_lower == 'cdiscount':
+            return 'CDISCOUNT'
+        
+        # Magento: mappa dal payment_method dell'ordine
+        elif marketplace_lower == 'magento':
+            magento_method = ordine.get('payment_method', '').lower()
+            
+            # Cerca nella mappa
+            mapped_method = MAGENTO_PAYMENT_MAP.get(magento_method)
+            
+            if mapped_method:
+                self.logger.info(f"[PAYMENT] Magento '{magento_method}' -> '{mapped_method}'")
+                return mapped_method
+            else:
+                self.logger.warning(f"[PAYMENT] Metodo Magento '{magento_method}' non mappato, uso CARTA DI CREDITO")
+                return 'CARTA DI CREDITO'
+        
+        # Fallback generico
+        self.logger.warning(f"[PAYMENT] Marketplace '{marketplace}' sconosciuto, uso CARTA DI CREDITO")
+        return 'CARTA DI CREDITO'
     
     def crea_ddt_da_ordine_marketplace(
         self, 
@@ -27,7 +83,7 @@ class DDTService:
             marketplace: 'backmarket', 'refurbed', 'cdiscount', 'magento'
             
         Returns:
-            Dict con success, ddt_id, codice_cliente, prodotti_ok, prodotti_errore
+            Dict con success, ddt_id, codice_cliente, prodotti_ok, prodotti_errore, payment_method
         """
         try:
             self.logger.info(
@@ -50,18 +106,25 @@ class DDTService:
             
             self.logger.info(f"Codice cliente: {codice_cliente}")
             
-            # 3. Prepara dati ordine con metodo pagamento
-            order_data = self._prepara_dati_ordine(ordine, marketplace)
+            # 3. Determina metodo pagamento InvoiceX
+            payment_method = self._get_invoicex_payment_method(ordine, marketplace)
             
-            # 4. Crea DDT vuoto
-            id_ddt = self.api.crea_ddt_vendita(codice_cliente, order_data['riferimento'])
+            # 4. Prepara dati ordine con metodo pagamento
+            order_id = ordine.get('order_id', '')
+            order_data = {
+                'riferimento': f"{marketplace.upper()}-{order_id}",
+                'metodo_pagamento': payment_method
+            }
+            
+            # 5. Crea DDT con metodo pagamento
+            id_ddt = self.api.crea_ddt_vendita(codice_cliente, order_data)
             
             if not id_ddt:
                 return {'success': False, 'error': 'Errore creazione DDT'}
             
-            self.logger.info(f"DDT creato: {id_ddt}")
+            self.logger.info(f"DDT creato: {id_ddt} con metodo pagamento: {payment_method}")
             
-            # 5. Movimenta prodotti
+            # 6. Movimenta prodotti
             prodotti = ordine.get('items', [])
             if not prodotti:
                 return {'success': False, 'error': 'Nessun prodotto nell\'ordine'}
@@ -94,10 +157,6 @@ class DDTService:
                     prodotti_errore.append(seriale)
                 
                 riga += 1
-            
-            # 6. Aggiungi metodo di pagamento come nota al DDT
-            payment_method = order_data['payment_method']
-            self._aggiungi_metodo_pagamento(id_ddt, payment_method)
             
             return {
                 'success': True,
@@ -152,28 +211,3 @@ class DDTService:
             'region': ordine.get('country', 'IT')[:2],
             'telephone': ordine.get('customer_phone', '')
         }
-    
-    def _prepara_dati_ordine(self, ordine: Dict, marketplace: str) -> Dict:
-        """Prepara dati ordine includendo metodo di pagamento"""
-        
-        payment_methods = {
-            'backmarket': 'BACKMARKET',
-            'refurbed': 'REFURBED',
-            'cdiscount': 'CDISCOUNT',
-            'magento': 'MAGENTO'
-        }
-        
-        payment_method = payment_methods.get(marketplace.lower(), marketplace.upper())
-        order_id = ordine.get('order_id', '')
-        
-        return {
-            'riferimento': f"{marketplace.upper()}-{order_id}",
-            'payment_method': payment_method
-        }
-    
-    def _aggiungi_metodo_pagamento(self, ddt_id: str, payment_method: str):
-        """Aggiungi metodo di pagamento come nota al DDT"""
-        try:
-            self.logger.info(f"DDT {ddt_id} - Metodo pagamento: {payment_method}")
-        except Exception as e:
-            self.logger.warning(f"Non è stato possibile aggiungere nota pagamento: {e}")

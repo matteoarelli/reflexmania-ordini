@@ -1,6 +1,5 @@
 """
-Client per API InvoiceX - Replica logica sistema Jarvis
-Usa le API esterne invece dell'accesso diretto al database
+Client per API InvoiceX - Versione con supporto metodo_pagamento
 """
 
 import requests
@@ -50,14 +49,12 @@ class InvoiceXAPIClient:
             True se cliente esiste, False altrimenti
         """
         try:
-            # IMPORTANTE: email nell'URL, NON nei params, NO API Key
             response = requests.get(
                 f"{self.base_url}/cercapermail/{email}",
                 timeout=self.timeout
             )
             response.raise_for_status()
             
-            # Risposta è JSON, non stringa
             data = response.json()
             return data is not None and len(data) > 0
             
@@ -76,7 +73,6 @@ class InvoiceXAPIClient:
             Codice cliente o None se non trovato
         """
         try:
-            # IMPORTANTE: email nell'URL, endpoint diverso, NO API Key
             response = requests.get(
                 f"{self.base_url}/recuperacodicedaemail/{email}",
                 timeout=self.timeout
@@ -124,7 +120,6 @@ class InvoiceXAPIClient:
         }
         
         try:
-            # IMPORTANTE: usa session (con API Key)
             response = self.session.post(
                 f"{self.base_url}/inserisci-cliente-da-magento",
                 json=payload,
@@ -132,7 +127,6 @@ class InvoiceXAPIClient:
             )
             response.raise_for_status()
             
-            # Risposta è JSON con il codice cliente
             data = response.json()
             codice = str(data) if data else None
             
@@ -147,24 +141,30 @@ class InvoiceXAPIClient:
             self.logger.error(f"Errore creazione cliente: {e}")
             return None
     
-    def crea_ddt_vendita(self, codice_cliente: str, riferimento: str) -> Optional[str]:
+    def crea_ddt_vendita(
+        self, 
+        codice_cliente: str, 
+        order_data: Dict
+    ) -> Optional[str]:
         """
-        Crea DDT vendita vuoto
+        Crea DDT vendita con riferimento e metodo pagamento
         
         Args:
             codice_cliente: Codice cliente InvoiceX
-            riferimento: Riferimento ordine (es: numero ordine marketplace)
+            order_data: Dict con 'riferimento' e 'metodo_pagamento'
             
         Returns:
             ID DDT creato o None in caso di errore
             
         Note:
-            Questa API usa GET con body JSON (non standard ma così funziona)
+            Questa API usa GET con body JSON
         """
-        payload = {'riferimento': riferimento}
+        payload = {
+            'riferimento': order_data.get('riferimento', ''),
+            'metodo_pagamento': order_data.get('metodo_pagamento', '')
+        }
         
         try:
-            # IMPORTANTE: API usa GET con body JSON (come nel sistema Jarvis)
             response = self.session.request(
                 'GET',
                 f"{self.base_url}/crea-ddt-vendita-codice/{codice_cliente}",
@@ -177,7 +177,7 @@ class InvoiceXAPIClient:
             if ddt_id and ddt_id.isdigit():
                 self.logger.info(
                     f"DDT creato: {ddt_id} (Cliente: {codice_cliente}, "
-                    f"Rif: {riferimento})"
+                    f"Rif: {payload['riferimento']}, Payment: {payload['metodo_pagamento']})"
                 )
                 return ddt_id
             
@@ -208,13 +208,6 @@ class InvoiceXAPIClient:
             
         Returns:
             True se successo, False altrimenti
-            
-        Note:
-            Questa API:
-            1. Cerca il prodotto per matricola/lotto in movimenti_magazzino
-            2. Crea riga in righ_ddt
-            3. Crea seriale in righ_ddt_matricole o lotto in righ_ddt_lotti
-            4. Crea movimento magazzino (causale 3 = vendita)
         """
         payload = {
             'idPadreDDT': str(id_ddt),
@@ -224,7 +217,6 @@ class InvoiceXAPIClient:
         }
         
         try:
-            # IMPORTANTE: API usa GET con body JSON
             response = self.session.request(
                 'GET',
                 f"{self.base_url}/movimenta-ddt-vendita",
@@ -233,7 +225,6 @@ class InvoiceXAPIClient:
             )
             response.raise_for_status()
             
-            # Response "0" indica errore (prodotto non trovato)
             result = response.text.strip()
             
             if result != "0":
@@ -288,34 +279,11 @@ class InvoiceXAPIClient:
             True se API raggiungibile, False altrimenti
         """
         try:
-            # Test con endpoint che non richiede API key
             response = requests.get(
                 f"{self.base_url}/cercapermail/test@healthcheck.com",
                 timeout=5
             )
-            # 200 o 404 va bene - significa che il server risponde
             return response.status_code in [200, 404]
         except Exception as e:
             self.logger.error(f"Health check fallito: {e}")
             return False
-
-
-# Esempio utilizzo
-if __name__ == "__main__":
-    # Configura logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
-    # Inizializza client
-    client = InvoiceXAPIClient(
-        base_url='https://api.reflexmania.it/',
-        api_key='52bf3c1f206dae8e45bf647cda396172'
-    )
-    
-    # Test health check
-    if client.health_check():
-        print("✓ API InvoiceX raggiungibile")
-    else:
-        print("✗ API InvoiceX non raggiungibile")

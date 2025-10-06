@@ -19,6 +19,7 @@ class MagentoService:
             'channel': 'magento',
             'order_id': str,
             'order_date': str,
+            'payment_method': str,
             'customer': {
                 'name': str,
                 'surname': str,
@@ -63,6 +64,10 @@ class MagentoService:
             postcode = billing.get('postcode', '')
             country = billing.get('country_id', '')
             
+            # Estrai metodo di pagamento
+            payment_info = order_data.get('payment', {})
+            payment_method = payment_info.get('method', 'unknown')
+            
             # Items dell'ordine
             items = []
             for item in order_data.get('items', []):
@@ -79,7 +84,7 @@ class MagentoService:
                     'name': item.get('name', ''),
                     'quantity': int(item.get('qty_ordered', 1)),
                     'price': float(item.get('price', 0)),
-                    'serial': None  # Da compilare manualmente o da altro sistema
+                    'serial': None
                 })
             
             # Se non ci sono items validi, skip
@@ -99,8 +104,9 @@ class MagentoService:
             normalized = {
                 'channel': 'magento',
                 'order_id': str(order_data.get('increment_id', order_data.get('entity_id'))),
-                'entity_id': order_data.get('entity_id'),  # ID interno per update status
+                'entity_id': order_data.get('entity_id'),
                 'order_date': order_date,
+                'payment_method': payment_method,
                 'customer': {
                     'name': firstname,
                     'surname': lastname,
@@ -116,7 +122,7 @@ class MagentoService:
                 'status': status
             }
             
-            logger.info(f"Ordine Magento #{normalized['order_id']} normalizzato con successo")
+            logger.info(f"Ordine Magento #{normalized['order_id']} normalizzato - Payment: {payment_method}")
             return normalized
             
         except Exception as e:
@@ -148,7 +154,6 @@ class MagentoService:
         """
         Recupera un singolo ordine per ID (increment_id)
         """
-        # Cerca tra tutti gli ordini processing
         orders = self.get_all_pending_orders()
         
         for order in orders:

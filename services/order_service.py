@@ -53,6 +53,12 @@ def normalize_order(order: Dict, source: str) -> Dict:
         }
     
     elif source == 'refurbed':
+        # DEBUG: stampa ordine completo
+        import json
+        logger.info(f"=== DEBUG REFURBED ORDER {order.get('id')} ===")
+        logger.info(json.dumps(order, indent=2, default=str))
+        logger.info("=== END DEBUG ===")
+    
         shipping = order.get('shipping_address', {})
         items = []
         

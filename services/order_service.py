@@ -53,18 +53,14 @@ def normalize_order(order: Dict, source: str) -> Dict:
         }
     
     elif source == 'refurbed':
-        # DEBUG: stampa ordine completo
-        import json
-        logger.info(f"=== DEBUG REFURBED ORDER {order.get('id')} ===")
-        logger.info(json.dumps(order, indent=2, default=str))
-        logger.info("=== END DEBUG ===")
-    
         shipping = order.get('shipping_address', {})
         items = []
         
-        order_items = order.get('items', order.get('order_items', []))
+        # CORRETTO: usa 'items' non 'order_items'
+        order_items = order.get('items', [])
         
         for item in order_items:
+            # Nome prodotto
             item_name = (
                 item.get('name') or 
                 item.get('title') or 
@@ -73,18 +69,23 @@ def normalize_order(order: Dict, source: str) -> Dict:
                 'N/A'
             )
             
+            # SKU
             sku = item.get('sku', '')
             if not sku:
                 offer_data = item.get('offer_data', {})
                 sku = offer_data.get('sku', item.get('id', ''))
             
+            # CORRETTO: prezzo da settlement_total_paid
+            price = float(item.get('settlement_total_paid', 0))
+            
             items.append({
                 'sku': sku,
                 'name': item_name,
-                'quantity': item.get('quantity', 1),
-                'price': float(item.get('price', 0))
+                'quantity': int(item.get('quantity', 1)),
+                'price': price
             })
         
+        # Data ordine
         order_date = (
             order.get('released_at') or 
             order.get('created_at') or 
@@ -93,28 +94,32 @@ def normalize_order(order: Dict, source: str) -> Dict:
             ''
         )
         
-        # FIX EMAIL REFURBED: prova più fonti + placeholder se mancante
+        # Email cliente - prova più fonti
         customer_email = (
             order.get('email') or
             order.get('customer_email') or
             shipping.get('email') or
             order.get('customer', {}).get('email') or
-            order.get('buyer', {}).get('email') or
             ''
         )
         
-        # Se ancora mancante, usa placeholder
+        # Se mancante, usa placeholder
         if not customer_email:
             order_id = order.get('id', 'unknown')
             customer_email = f"refurbed_{order_id}@placeholder.reflexmania.it"
             logger.warning(f"Email mancante per ordine Refurbed {order_id}, usando placeholder")
+        
+        # CORRETTO: nome completo da shipping_address
+        first_name = shipping.get('first_name', '')
+        last_name = shipping.get('last_name', '')
+        customer_name = f"{first_name} {last_name}".strip()
         
         return {
             'order_id': str(order.get('id', '')),
             'source': 'Refurbed',
             'status': order.get('state', 'NEW'),
             'date': order_date,
-            'customer_name': f"{shipping.get('first_name', '')} {shipping.get('last_name', '')}".strip(),
+            'customer_name': customer_name,
             'customer_email': customer_email,
             'customer_phone': shipping.get('phone', ''),
             'address': f"{shipping.get('street', '')} {shipping.get('house_no', '')} {shipping.get('supplement', '')}".strip(),
@@ -122,7 +127,7 @@ def normalize_order(order: Dict, source: str) -> Dict:
             'postal_code': shipping.get('post_code', ''),
             'country': shipping.get('country_code', ''),
             'items': items,
-            'total': float(order.get('settlement_total_paid', order.get('total_paid', 0))),
+            'total': float(order.get('settlement_total_paid', 0)),
             'accepted': False
         }
     

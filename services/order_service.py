@@ -53,99 +53,130 @@ def normalize_order(order: Dict, source: str) -> Dict:
         }
     
     elif source == 'refurbed':
-        shipping = order.get('shipping_address', {})
-        items = []
-        
-        order_items = order.get('items', order.get('order_items', []))
-        
-        for item in order_items:
-            item_name = (
-                item.get('name') or 
-                item.get('title') or 
-                item.get('product_name') or
-                item.get('instance_name') or
-                'N/A'
-            )
-            
-            sku = item.get('sku', '')
-            if not sku:
-                offer_data = item.get('offer_data', {})
-                sku = offer_data.get('sku', item.get('id', ''))
-            
-            items.append({
-                'sku': sku,
-                'name': item_name,
-                'quantity': item.get('quantity', 1),
-                'price': float(item.get('price', 0))
-            })
-        
-        order_date = (
-            order.get('released_at') or 
-            order.get('created_at') or 
-            order.get('order_date') or 
-            order.get('date') or
-            ''
+    shipping = order.get('shipping_address', {})
+    items = []
+    
+    order_items = order.get('items', order.get('order_items', []))
+    
+    for item in order_items:
+        item_name = (
+            item.get('name') or 
+            item.get('title') or 
+            item.get('product_name') or
+            item.get('instance_name') or
+            'N/A'
         )
         
-        # FIX EMAIL REFURBED: prova più fonti + placeholder se mancante
-        customer_email = (
-            order.get('email') or
-            order.get('customer_email') or
-            shipping.get('email') or
-            order.get('customer', {}).get('email') or
-            order.get('buyer', {}).get('email') or
-            ''
-        )
+        sku = item.get('sku', '')
+        if not sku:
+            offer_data = item.get('offer_data', {})
+            sku = offer_data.get('sku', item.get('id', ''))
         
-        # Se ancora mancante, usa placeholder
-        if not customer_email:
-            order_id = order.get('id', 'unknown')
-            customer_email = f"refurbed_{order_id}@placeholder.reflexmania.it"
-            logger.warning(f"Email mancante per ordine Refurbed {order_id}, usando placeholder")
+        # FIX PREZZO: prova più campi
+        price = float(item.get('price', 0))
+        if price == 0:
+            price = float(item.get('unit_price', 0))
+        if price == 0:
+            price = float(item.get('amount', 0))
+        if price == 0:
+            price = float(item.get('total_price', 0))
         
-        return {
-            'order_id': str(order.get('id', '')),
-            'source': 'Refurbed',
-            'status': order.get('state', 'NEW'),
-            'date': order_date,
-            'customer_name': f"{shipping.get('first_name', '')} {shipping.get('last_name', '')}".strip(),
-            'customer_email': customer_email,
-            'customer_phone': shipping.get('phone', ''),
-            'address': f"{shipping.get('street', '')} {shipping.get('house_no', '')} {shipping.get('supplement', '')}".strip(),
-            'city': shipping.get('town', ''),
-            'postal_code': shipping.get('post_code', ''),
-            'country': shipping.get('country_code', ''),
-            'items': items,
-            'total': float(order.get('settlement_total_paid', order.get('total_paid', 0))),
-            'accepted': False
-        }
+        items.append({
+            'sku': sku,
+            'name': item_name,
+            'quantity': item.get('quantity', 1),
+            'price': price
+        })
+    
+    order_date = (
+        order.get('released_at') or 
+        order.get('created_at') or 
+        order.get('order_date') or 
+        order.get('date') or
+        ''
+    )
+    
+    # FIX EMAIL REFURBED: prova più fonti + placeholder se mancante
+    customer_email = (
+        order.get('email') or
+        order.get('customer_email') or
+        shipping.get('email') or
+        order.get('customer', {}).get('email') or
+        order.get('buyer', {}).get('email') or
+        ''
+    )
+    
+    # Se ancora mancante, usa placeholder
+    if not customer_email:
+        order_id = order.get('id', 'unknown')
+        customer_email = f"refurbed_{order_id}@placeholder.reflexmania.it"
+        logger.warning(f"Email mancante per ordine Refurbed {order_id}, usando placeholder")
+    
+    # FIX NOME COGNOME: assicura che ci siano entrambi
+    first_name = shipping.get('first_name', '') or shipping.get('firstName', '')
+    last_name = shipping.get('last_name', '') or shipping.get('lastName', '')
+    
+    # Se manca cognome, prova a splittare il nome completo
+    if not last_name and first_name:
+        name_parts = first_name.split(' ', 1)
+        if len(name_parts) > 1:
+            first_name = name_parts[0]
+            last_name = name_parts[1]
+    
+    return {
+        'order_id': str(order.get('id', '')),
+        'source': 'Refurbed',
+        'status': order.get('state', 'NEW'),
+        'date': order_date,
+        'customer_name': f"{first_name} {last_name}".strip(),
+        'customer_email': customer_email,
+        'customer_phone': shipping.get('phone', ''),
+        'address': f"{shipping.get('street', '')} {shipping.get('house_no', '')} {shipping.get('supplement', '')}".strip(),
+        'city': shipping.get('town', ''),
+        'postal_code': shipping.get('post_code', ''),
+        'country': shipping.get('country_code', ''),
+        'items': items,
+        'total': float(order.get('settlement_total_paid', order.get('total_paid', 0))),
+        'accepted': False
+    }
     
     elif source == 'octopia':
-        items = []
-        shipping = {}
+    items = []
+    shipping = {}
+    
+    for line in order.get('lines', []):
+        shipping = line.get('shippingAddress', {})
+        offer = line.get('offer', {})
         
-        for line in order.get('lines', []):
-            shipping = line.get('shippingAddress', {})
-            offer = line.get('offer', {})
-            
-            # FIX PREZZO CDISCOUNT: prova tutti i campi possibili
-            price_data = line.get('price', {})
-            price = float(price_data.get('amount', 0))
-            
-            if price == 0:
-                price = float(price_data.get('sellingPrice', 0))
-            if price == 0:
-                price = float(line.get('unitPrice', 0))
-            if price == 0:
-                price = float(offer.get('price', 0))
-            
-            items.append({
-                'sku': offer.get('sellerProductId', ''),
-                'name': offer.get('productTitle', 'N/A'),
-                'quantity': line.get('quantity', 1),
-                'price': price
-            })
+        # FIX PREZZO CDISCOUNT: prova TUTTI i campi possibili
+        price_data = line.get('price', {})
+        price = float(price_data.get('amount', 0))
         
+        if price == 0:
+            price = float(price_data.get('sellingPrice', 0))
+        if price == 0:
+            price = float(line.get('unitPrice', 0))
+        if price == 0:
+            price = float(line.get('totalPrice', 0))
+        if price == 0:
+            price = float(offer.get('price', 0))
+        if price == 0:
+            price = float(offer.get('amount', 0))
+        
+        # Se ancora zero, prova a calcolare dal totale
+        if price == 0:
+            quantity = line.get('quantity', 1)
+            total = float(line.get('totalAmount', 0))
+            if total > 0 and quantity > 0:
+                price = total / quantity
+        
+        items.append({
+            'sku': offer.get('sellerProductId', ''),
+            'name': offer.get('productTitle', 'N/A'),
+            'quantity': line.get('quantity', 1),
+            'price': price
+        })
+     
         return {
             'order_id': order.get('orderId'),
             'source': 'CDiscount',

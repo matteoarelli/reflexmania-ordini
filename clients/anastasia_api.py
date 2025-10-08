@@ -200,7 +200,7 @@ class AnastasiaClient:
         Converte timestamp (Unix o stringa MySQL) in stringa leggibile
         
         Args:
-            timestamp: Timestamp Unix (int) o stringa MySQL datetime
+            timestamp: Timestamp Unix (int/str) o stringa MySQL datetime
             
         Returns:
             Stringa formattata (es: "2 ore fa", "15/10/2025 14:30")
@@ -212,13 +212,18 @@ class AnastasiaClient:
             # Se è un intero, è un timestamp Unix
             if isinstance(timestamp, int):
                 dt = datetime.fromtimestamp(timestamp)
-            # Se è stringa, prova a parsarla come datetime MySQL
+            # Se è stringa, prova diversi formati
             elif isinstance(timestamp, str):
-                # Formati MySQL comuni: "2025-10-08 14:30:45" o "2025-10-08"
-                if ' ' in timestamp:
-                    dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
-                else:
-                    dt = datetime.strptime(timestamp, "%Y-%m-%d")
+                # Prova prima a convertirlo in int (timestamp Unix come stringa)
+                try:
+                    unix_timestamp = int(timestamp)
+                    dt = datetime.fromtimestamp(unix_timestamp)
+                except ValueError:
+                    # Non è un numero, prova formati MySQL datetime
+                    if ' ' in timestamp:
+                        dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+                    else:
+                        dt = datetime.strptime(timestamp, "%Y-%m-%d")
             else:
                 return 'N/A'
             
@@ -245,7 +250,8 @@ class AnastasiaClient:
                 
         except Exception as e:
             logger.error(f"Errore format timestamp: {e}")
-            return 'N/A'
+            # Mostra il valore raw per debug
+            return str(timestamp)[:10] if timestamp else 'N/A'
     
     def health_check(self) -> bool:
         """

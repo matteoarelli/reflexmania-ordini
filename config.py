@@ -33,6 +33,22 @@ INVOICEX_CONFIG = {
 INVOICEX_API_URL = os.getenv('INVOICEX_API_URL', 'https://api.reflexmania.it/')
 INVOICEX_API_KEY = os.getenv('INVOICEX_API_KEY', '52bf3c1f206dae8e45bf647cda396172')
 
+# ============================================================================
+# ANASTASIA DATABASE (MySQL A2Hosting)
+# ============================================================================
+ANASTASIA_DB_CONFIG = {
+    'host': os.getenv('ANASTASIA_HOST', 'nl1-ts3.a2hosting.com'),
+    'port': int(os.getenv('ANASTASIA_PORT', 3306)),
+    'database': os.getenv('ANASTASIA_DB', 'ilblogdi_anastasia'),
+    'user': os.getenv('ANASTASIA_USER', 'ilblogdi_anastasia'),
+    'password': os.getenv('ANASTASIA_PASS', 'cd9g!1g4yvq_'),
+    'connect_timeout': 10,
+    'autocommit': True
+}
+
+# URL sistema Anastasia
+ANASTASIA_URL = os.getenv('ANASTASIA_URL', 'https://anastasia.reflexmania.com')
+
 # Flask
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 DEBUG = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'

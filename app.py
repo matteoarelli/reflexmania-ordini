@@ -54,102 +54,280 @@ invoicex_api_client = InvoiceXAPIClient(
 
 # Inizializza DDT Service
 ddt_service = DDTService(invoicex_api_client)
+# ============================================================================
+# AGGIUNGERE DOPO LA RIGA 48 (dopo inizializzazione ddt_service)
+# ============================================================================
 
+# Import client Anastasia
+from clients.anastasia_api import AnastasiaClient
+from config import ANASTASIA_DB_CONFIG, ANASTASIA_URL
+
+# Inizializza Anastasia client
+try:
+    anastasia_client = AnastasiaClient(ANASTASIA_DB_CONFIG)
+    logger.info("✅ Client Anastasia inizializzato")
+except Exception as e:
+    logger.error(f"❌ Errore inizializzazione Anastasia: {e}")
+    anastasia_client = None
+
+
+# ============================================================================
+# API ANASTASIA TICKETS
+# ============================================================================
+
+@app.route('/api/tickets/stats')
+def api_tickets_stats():
+    """API: Statistiche ticket Anastasia"""
+    try:
+        if not anastasia_client:
+            return jsonify({'error': 'Client Anastasia non disponibile'}), 503
+        
+        stats = anastasia_client.get_ticket_stats()
+        return jsonify(stats)
+    except Exception as e:
+        logger.error(f"Errore API tickets stats: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tickets/open')
+def api_tickets_open():
+    """API: Lista ultimi ticket aperti"""
+    try:
+        if not anastasia_client:
+            return jsonify({'error': 'Client Anastasia non disponibile'}), 503
+        
+        limit = request.args.get('limit', 10, type=int)
+        tickets = anastasia_client.get_open_tickets(limit=limit)
+        
+        return jsonify({
+            'success': True,
+            'count': len(tickets),
+            'tickets': tickets
+        })
+    except Exception as e:
+        logger.error(f"Errore API tickets open: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tickets/closed-today')
+def api_tickets_closed_today():
+    """API: Lista ticket chiusi oggi"""
+    try:
+        if not anastasia_client:
+            return jsonify({'error': 'Client Anastasia non disponibile'}), 503
+        
+        tickets = anastasia_client.get_recent_closed_tickets(limit=5)
+        
+        return jsonify({
+            'success': True,
+            'count': len(tickets),
+            'tickets': tickets
+        })
+    except Exception as e:
+        logger.error(f"Errore API tickets closed today: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/')
 def dashboard():
-    """Dashboard principale con tabella ordini"""
+    """Dashboard principale con tabella ordini + widget Anastasia"""
     
     html = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>ReflexMania - Gestione Ordini</title>
+        <title>ReflexMania - Gestione Unificata</title>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
+            
             body { 
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-                background: #f5f5f5;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
                 padding: 20px;
             }
-            .container { max-width: 1400px; margin: 0 auto; }
-            h1 { 
+            
+            .container { 
+                max-width: 1600px; 
+                margin: 0 auto; 
+            }
+            
+            .header {
+                background: rgba(255,255,255,0.95);
+                backdrop-filter: blur(10px);
+                padding: 30px;
+                border-radius: 16px;
+                margin-bottom: 20px;
+                box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            }
+            
+            .header h1 { 
                 color: #333; 
-                margin-bottom: 30px;
                 font-size: 32px;
+                margin-bottom: 10px;
+                font-weight: 700;
             }
-            .stats {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 20px;
-                margin-bottom: 30px;
-            }
-            .stat-card {
-                background: white;
-                padding: 20px;
-                border-radius: 8px;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }
-            .stat-card h3 {
+            
+            .header-subtitle {
                 color: #666;
                 font-size: 14px;
-                margin-bottom: 10px;
             }
-            .stat-card .number {
-                font-size: 32px;
-                font-weight: bold;
-                color: #007bff;
-            }
-            .actions {
-                background: white;
-                padding: 20px;
-                border-radius: 8px;
+            
+            .main-grid {
+                display: grid;
+                grid-template-columns: 1fr 380px;
+                gap: 20px;
                 margin-bottom: 20px;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             }
+            
+            @media (max-width: 1200px) {
+                .main-grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+            
+            .stats {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 15px;
+                margin-bottom: 20px;
+            }
+            
+            .stat-card {
+                background: rgba(255,255,255,0.95);
+                backdrop-filter: blur(10px);
+                padding: 20px;
+                border-radius: 12px;
+                box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+                transition: transform 0.2s;
+            }
+            
+            .stat-card:hover {
+                transform: translateY(-4px);
+                box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+            }
+            
+            .stat-card h3 {
+                color: #666;
+                font-size: 12px;
+                margin-bottom: 8px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                font-weight: 600;
+            }
+            
+            .stat-card .number {
+                font-size: 36px;
+                font-weight: 700;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+            }
+            
+            .orders-section {
+                background: rgba(255,255,255,0.95);
+                backdrop-filter: blur(10px);
+                border-radius: 16px;
+                padding: 25px;
+                box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            }
+            
+            .section-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 20px;
+            }
+            
+            .section-header h2 {
+                font-size: 24px;
+                color: #333;
+                font-weight: 700;
+            }
+            
+            .actions {
+                display: flex;
+                gap: 10px;
+            }
+            
             .btn {
-                padding: 12px 24px;
+                padding: 10px 20px;
                 border: none;
-                border-radius: 5px;
+                border-radius: 8px;
                 cursor: pointer;
                 font-size: 14px;
-                margin-right: 10px;
+                font-weight: 600;
                 transition: all 0.3s;
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
             }
-            .btn-primary { background: #007bff; color: white; }
-            .btn-primary:hover { background: #0056b3; }
-            .btn-success { background: #28a745; color: white; }
-            .btn-success:hover { background: #218838; }
-            .btn-small { padding: 6px 12px; font-size: 12px; }
+            
+            .btn-primary { 
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white; 
+            }
+            
+            .btn-primary:hover { 
+                transform: translateY(-2px);
+                box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+            }
+            
+            .btn-success { 
+                background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+                color: white; 
+            }
+            
+            .btn-success:hover { 
+                transform: translateY(-2px);
+                box-shadow: 0 4px 12px rgba(17, 153, 142, 0.4);
+            }
+            
+            .btn-small { 
+                padding: 6px 12px; 
+                font-size: 12px; 
+            }
             
             table {
                 width: 100%;
                 background: white;
-                border-radius: 8px;
+                border-radius: 12px;
                 overflow: hidden;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             }
+            
             th {
                 background: #f8f9fa;
                 padding: 15px;
                 text-align: left;
                 font-weight: 600;
                 color: #333;
-                border-bottom: 2px solid #dee2e6;
+                font-size: 13px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                border-bottom: 2px solid #e9ecef;
             }
+            
             td {
                 padding: 15px;
-                border-bottom: 1px solid #dee2e6;
+                border-bottom: 1px solid #f1f3f5;
             }
-            tr:hover { background: #f8f9fa; }
+            
+            tr:hover { 
+                background: #f8f9fa; 
+            }
+            
             .badge {
                 display: inline-block;
-                padding: 4px 8px;
-                border-radius: 4px;
-                font-size: 12px;
-                font-weight: 600;
+                padding: 4px 10px;
+                border-radius: 6px;
+                font-size: 11px;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
             }
+            
             .badge-backmarket { background: #e3f2fd; color: #1976d2; }
             .badge-refurbed { background: #f3e5f5; color: #7b1fa2; }
             .badge-cdiscount { background: #fff3e0; color: #f57c00; }
@@ -157,21 +335,193 @@ def dashboard():
             .badge-accepted { background: #d4edda; color: #155724; }
             .badge-pending { background: #fff3cd; color: #856404; }
             
+            /* WIDGET ANASTASIA */
+            .anastasia-widget {
+                background: rgba(255,255,255,0.95);
+                backdrop-filter: blur(10px);
+                border-radius: 16px;
+                padding: 25px;
+                box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+                height: fit-content;
+                position: sticky;
+                top: 20px;
+            }
+            
+            .widget-header {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 20px;
+            }
+            
+            .widget-header h2 {
+                font-size: 24px;
+                color: #333;
+                font-weight: 700;
+            }
+            
+            .widget-icon {
+                font-size: 32px;
+            }
+            
+            .ticket-stats {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 12px;
+                margin-bottom: 20px;
+            }
+            
+            .ticket-stat {
+                background: #f8f9fa;
+                padding: 15px;
+                border-radius: 10px;
+                text-align: center;
+            }
+            
+            .ticket-stat .label {
+                font-size: 11px;
+                color: #666;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 8px;
+                font-weight: 600;
+            }
+            
+            .ticket-stat .value {
+                font-size: 32px;
+                font-weight: 700;
+            }
+            
+            .ticket-stat.open .value { color: #dc3545; }
+            .ticket-stat.closed .value { color: #28a745; }
+            
+            .ticket-list {
+                margin-bottom: 20px;
+            }
+            
+            .ticket-item {
+                background: #f8f9fa;
+                padding: 12px;
+                border-radius: 8px;
+                margin-bottom: 10px;
+                transition: all 0.2s;
+                cursor: pointer;
+            }
+            
+            .ticket-item:hover {
+                background: #e9ecef;
+                transform: translateX(4px);
+            }
+            
+            .ticket-item .ticket-title {
+                font-weight: 600;
+                color: #333;
+                font-size: 14px;
+                margin-bottom: 4px;
+                display: block;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            
+            .ticket-item .ticket-meta {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                font-size: 12px;
+                color: #666;
+            }
+            
+            .ticket-item .customer-name {
+                font-weight: 500;
+            }
+            
+            .ticket-item .ticket-time {
+                font-size: 11px;
+                color: #999;
+            }
+            
+            .btn-anastasia {
+                width: 100%;
+                background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                color: white;
+                padding: 14px;
+                border: none;
+                border-radius: 10px;
+                font-size: 15px;
+                font-weight: 700;
+                cursor: pointer;
+                transition: all 0.3s;
+                text-align: center;
+                text-decoration: none;
+                display: block;
+            }
+            
+            .btn-anastasia:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 20px rgba(245, 87, 108, 0.4);
+            }
+            
+            .empty-state {
+                text-align: center;
+                padding: 40px 20px;
+                color: #999;
+            }
+            
+            .empty-state-icon {
+                font-size: 48px;
+                margin-bottom: 10px;
+                opacity: 0.3;
+            }
+            
             #loading {
                 display: none;
                 text-align: center;
                 padding: 20px;
                 color: #666;
+                background: rgba(255,255,255,0.9);
+                border-radius: 10px;
+                margin: 20px 0;
+            }
+            
+            .spinner {
+                border: 3px solid #f3f3f3;
+                border-top: 3px solid #667eea;
+                border-radius: 50%;
+                width: 30px;
+                height: 30px;
+                animation: spin 1s linear infinite;
+                margin: 0 auto 10px;
+            }
+            
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            
+            .error-widget {
+                background: #fff3cd;
+                border: 2px solid #ffc107;
+                border-radius: 10px;
+                padding: 15px;
+                margin-bottom: 15px;
+                color: #856404;
+                font-size: 13px;
             }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>ReflexMania - Gestione Ordini</h1>
+            <!-- HEADER -->
+            <div class="header">
+                <h1>🚀 ReflexMania - Gestione Unificata</h1>
+                <div class="header-subtitle">Dashboard ordini marketplace + ticket valutazioni</div>
+            </div>
             
+            <!-- STATISTICHE GLOBALI -->
             <div class="stats">
                 <div class="stat-card">
-                    <h3>Ordini Pendenti</h3>
+                    <h3>📦 Ordini Totali</h3>
                     <div class="number" id="pending-count">-</div>
                 </div>
                 <div class="stat-card">
@@ -190,38 +540,95 @@ def dashboard():
                     <h3>Magento</h3>
                     <div class="number" id="mg-count">-</div>
                 </div>
+                <div class="stat-card">
+                    <h3>🎫 Ticket Aperti</h3>
+                    <div class="number" id="tickets-open-header">-</div>
+                </div>
             </div>
             
-            <div class="actions">
-                <button class="btn btn-primary" onclick="refreshOrders()">Aggiorna Ordini</button>
-                <button class="btn btn-success" onclick="downloadCSV()">Scarica CSV Packlink</button>
+            <!-- GRID PRINCIPALE -->
+            <div class="main-grid">
+                <!-- SEZIONE ORDINI -->
+                <div class="orders-section">
+                    <div class="section-header">
+                        <h2>📦 Ordini Marketplace</h2>
+                        <div class="actions">
+                            <button class="btn btn-primary" onclick="refreshOrders()">
+                                🔄 Aggiorna
+                            </button>
+                            <button class="btn btn-success" onclick="downloadCSV()">
+                                📥 CSV Packlink
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div id="loading">
+                        <div class="spinner"></div>
+                        Caricamento in corso...
+                    </div>
+                    
+                    <div style="overflow-x: auto;">
+                        <table id="orders-table">
+                            <thead>
+                                <tr>
+                                    <th>Numero Ordine</th>
+                                    <th>Canale</th>
+                                    <th>Cliente</th>
+                                    <th>Prodotto</th>
+                                    <th>SKU / Seriale</th>
+                                    <th>Data</th>
+                                    <th>Importo</th>
+                                    <th>Stato</th>
+                                    <th>Azioni</th>
+                                </tr>
+                            </thead>
+                            <tbody id="orders-body">
+                                <tr><td colspan="9" style="text-align: center; padding: 40px;">Caricamento ordini...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- WIDGET ANASTASIA -->
+                <div class="anastasia-widget">
+                    <div class="widget-header">
+                        <span class="widget-icon">🎫</span>
+                        <h2>Ticket Anastasia</h2>
+                    </div>
+                    
+                    <div id="anastasia-error" class="error-widget" style="display: none;">
+                        ⚠️ Impossibile connettersi al sistema Anastasia
+                    </div>
+                    
+                    <div class="ticket-stats">
+                        <div class="ticket-stat open">
+                            <div class="label">Aperti</div>
+                            <div class="value" id="tickets-open">0</div>
+                        </div>
+                        <div class="ticket-stat closed">
+                            <div class="label">Chiusi Oggi</div>
+                            <div class="value" id="tickets-closed-today">0</div>
+                        </div>
+                    </div>
+                    
+                    <div class="ticket-list" id="ticket-list">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📭</div>
+                            <div>Caricamento ticket...</div>
+                        </div>
+                    </div>
+                    
+                    <a href="https://anastasia.reflexmania.com" target="_blank" class="btn-anastasia">
+                        Apri Anastasia →
+                    </a>
+                </div>
             </div>
-            
-            <div id="loading">Caricamento in corso...</div>
-            
-            <table id="orders-table">
-                <thead>
-                    <tr>
-                        <th>Numero Ordine</th>
-                        <th>Canale</th>
-                        <th>Cliente</th>
-                        <th>Prodotto</th>
-                        <th>SKU / Seriale</th>
-                        <th>Data</th>
-                        <th>Importo</th>
-                        <th>Stato</th>
-                        <th>Azioni</th>
-                    </tr>
-                </thead>
-                <tbody id="orders-body">
-                    <tr><td colspan="9" style="text-align: center; padding: 40px;">Caricamento ordini...</td></tr>
-                </tbody>
-            </table>
         </div>
         
         <script>
             let orders = [];
             
+            // ========== ORDINI ==========
             function refreshOrders() {
                 document.getElementById('loading').style.display = 'block';
                 fetch('/api/orders/all')
@@ -256,7 +663,7 @@ def dashboard():
                 const tbody = document.getElementById('orders-body');
                 
                 if (orders.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 40px;">Nessun ordine pendente</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="9" class="empty-state"><div class="empty-state-icon">✅</div><div>Nessun ordine pendente</div></td></tr>';
                     return;
                 }
                 
@@ -322,7 +729,17 @@ def dashboard():
                         statusBadge = '<span class="badge badge-pending">Pendente</span>';
                     }
                     
-                    return `<tr><td><strong>${order.order_id}</strong></td><td><span class="badge ${badgeClass}">${order.source}</span></td><td>${order.customer_name}</td><td>${productInfo}</td><td><code>${skuInfo}</code></td><td>${date}</td><td><strong>€${order.total.toFixed(2)}</strong></td><td>${statusBadge}</td><td>${actionButtons}</td></tr>`;
+                    return `<tr>
+                        <td><strong>${order.order_id}</strong></td>
+                        <td><span class="badge ${badgeClass}">${order.source}</span></td>
+                        <td>${order.customer_name}</td>
+                        <td>${productInfo}</td>
+                        <td><code>${skuInfo}</code></td>
+                        <td>${date}</td>
+                        <td><strong>€${order.total.toFixed(2)}</strong></td>
+                        <td>${statusBadge}</td>
+                        <td>${actionButtons}</td>
+                    </tr>`;
                 }).join('');
             }
             
@@ -355,8 +772,62 @@ def dashboard():
             
             function downloadCSV() { window.location.href = '/api/packlink_csv'; }
             
+            // ========== ANASTASIA TICKETS ==========
+            function refreshTickets() {
+                // Statistiche
+                fetch('/api/tickets/stats')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.error) {
+                            document.getElementById('anastasia-error').style.display = 'block';
+                            return;
+                        }
+                        document.getElementById('anastasia-error').style.display = 'none';
+                        document.getElementById('tickets-open').textContent = data.open || 0;
+                        document.getElementById('tickets-closed-today').textContent = data.today_closed || 0;
+                        document.getElementById('tickets-open-header').textContent = data.open || 0;
+                    })
+                    .catch(err => {
+                        console.error('Errore stats Anastasia:', err);
+                        document.getElementById('anastasia-error').style.display = 'block';
+                    });
+                
+                // Lista ticket aperti
+                fetch('/api/tickets/open?limit=5')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.error || !data.tickets) {
+                            return;
+                        }
+                        
+                        const list = document.getElementById('ticket-list');
+                        
+                        if (data.tickets.length === 0) {
+                            list.innerHTML = '<div class="empty-state"><div class="empty-state-icon">✅</div><div>Nessun ticket aperto</div></div>';
+                            return;
+                        }
+                        
+                        list.innerHTML = data.tickets.map(ticket => `
+                            <div class="ticket-item" onclick="window.open('https://anastasia.reflexmania.com', '_blank')">
+                                <span class="ticket-title">${ticket.title}</span>
+                                <div class="ticket-meta">
+                                    <span class="customer-name">👤 ${ticket.customer_name}</span>
+                                    <span class="ticket-time">${ticket.last_update}</span>
+                                </div>
+                            </div>
+                        `).join('');
+                    })
+                    .catch(err => {
+                        console.error('Errore lista Anastasia:', err);
+                    });
+            }
+            
+            // Auto-refresh
             refreshOrders();
-            setInterval(refreshOrders, 120000);
+            refreshTickets();
+            
+            setInterval(refreshOrders, 120000); // Ordini ogni 2 minuti
+            setInterval(refreshTickets, 30000);  // Ticket ogni 30 secondi
         </script>
     </body>
     </html>
@@ -680,6 +1151,18 @@ def get_all_orders():
 
 @app.route('/health')
 def health():
+    """Health check con verifica Anastasia"""
+    anastasia_status = 'ok'
+    
+    if anastasia_client:
+        try:
+            if not anastasia_client.health_check():
+                anastasia_status = 'error'
+        except:
+            anastasia_status = 'error'
+    else:
+        anastasia_status = 'unavailable'
+    
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
@@ -688,10 +1171,10 @@ def health():
             'refurbed': 'ok',
             'cdiscount': 'ok',
             'magento': 'ok',
-            'invoicex': 'ok'
+            'invoicex': 'ok',
+            'anastasia': anastasia_status
         }
     })
-
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))

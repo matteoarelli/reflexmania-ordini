@@ -195,12 +195,12 @@ class AnastasiaClient:
             logger.error(f"Errore get_recent_closed_tickets: {e}")
             return []
     
-    def _format_timestamp(self, timestamp: Optional[int]) -> str:
+    def _format_timestamp(self, timestamp) -> str:
         """
-        Converte timestamp Unix in stringa leggibile
+        Converte timestamp (Unix o stringa MySQL) in stringa leggibile
         
         Args:
-            timestamp: Timestamp Unix
+            timestamp: Timestamp Unix (int) o stringa MySQL datetime
             
         Returns:
             Stringa formattata (es: "2 ore fa", "15/10/2025 14:30")
@@ -209,7 +209,19 @@ class AnastasiaClient:
             return 'N/A'
         
         try:
-            dt = datetime.fromtimestamp(timestamp)
+            # Se è un intero, è un timestamp Unix
+            if isinstance(timestamp, int):
+                dt = datetime.fromtimestamp(timestamp)
+            # Se è stringa, prova a parsarla come datetime MySQL
+            elif isinstance(timestamp, str):
+                # Formati MySQL comuni: "2025-10-08 14:30:45" o "2025-10-08"
+                if ' ' in timestamp:
+                    dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+                else:
+                    dt = datetime.strptime(timestamp, "%Y-%m-%d")
+            else:
+                return 'N/A'
+            
             now = datetime.now()
             diff = now - dt
             

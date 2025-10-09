@@ -7,12 +7,22 @@ logger = logging.getLogger(__name__)
 class MagentoAPIClient:
     """Client per interagire con Magento REST API"""
     
+    # Mapping corrieri supportati
+    CARRIERS = {
+        'BRT': 'custom',
+        'UPS': 'ups',
+        'DHL': 'dhl',
+        'FEDEX': 'fedex',
+        'TNT': 'tnt',
+        'GLS': 'custom'
+    }
+    
     def __init__(self, base_url: str = None, token: str = None):
         from config import MAGENTO_URL, MAGENTO_TOKEN
         self.base_url = (base_url or MAGENTO_URL).rstrip('/')
         self.token = token or MAGENTO_TOKEN
         self.headers = {
-            'Authorization': f'Bearer {token}',
+            'Authorization': f'Bearer {self.token}',
             'Content-Type': 'application/json'
         }
     
@@ -29,10 +39,18 @@ class MagentoAPIClient:
                 **kwargs
             )
             response.raise_for_status()
-            return response.json()
+            
+            # Alcune chiamate Magento ritornano 200 senza body
+            if response.status_code == 200 and response.text:
+                return response.json()
+            elif response.status_code in [200, 201]:
+                return {'success': True}
+            
+            return None
+            
         except requests.exceptions.RequestException as e:
             logger.error(f"Errore chiamata Magento API {endpoint}: {str(e)}")
-            if hasattr(e.response, 'text'):
+            if hasattr(e, 'response') and hasattr(e.response, 'text'):
                 logger.error(f"Response: {e.response.text}")
             return None
     
@@ -111,3 +129,115 @@ class MagentoAPIClient:
         
         logger.error(f"Errore aggiornamento stato ordine #{entity_id}")
         return False
+    
+    def disable_product(self, sku: str) -> bool:
+        """
+        Disabilita un prodotto su Magento (status = 2)
+        Status: 1 = Enabled, 2 = Disabled
+        """
+        try:
+            endpoint = f"/rest/V1/products/{sku}"
+            
+            payload = {
+                "product": {
+                    "sku": sku,
+                    "status": 2  # Disabled
+                }
+            }
+            
+            result = self._make_request('PUT', endpoint, json=payload)
+            
+            if result:
+                logger.info(f"✅ Prodotto Magento {sku} disabilitato")
+                return True
+            else:
+                logger.error(f"❌ Errore disabilitazione prodotto Magento {sku}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Errore disable_product Magento: {e}")
+            return False
+    
+    def create_shipment(
+        self, 
+        order_id: int, 
+        tracking_number: str, 
+        carrier_code: str = 'custom',
+        carrier_title: str = 'BRT'
+    ) -> Optional[int]:
+        """
+        Crea una spedizione per un ordine Magento
+        
+        Args:
+            order_id: Entity ID dell'ordine
+            tracking_number: Numero di tracking
+            carrier_code: Codice corriere ('custom', 'ups', 'dhl', etc.)
+            carrier_title: Nome corriere per visualizzazione ('BRT', 'UPS', 'DHL')
+            
+        Returns:
+            Shipment ID se successo, None altrimenti
+        """
+        try:
+            # Step 1: Recupera dettagli ordine per ottenere gli items
+            order = self.get_order_details(order_id)
+            
+            if not order:
+                logger.error(f"Impossibile recuperare ordine #{order_id} per shipment")
+                return None
+            
+            # Step 2: Prepara items per shipment (tutti gli item ordinati)
+            items = []
+            for item in order.get('items', []):
+                # Salta item virtuali/bundle parents
+                if item.get('product_type') in ['virtual', 'downloadable']:
+                    continue
+                if item.get('parent_item_id'):
+                    continue
+                
+                items.append({
+                    "order_item_id": item['item_id'],
+                    "qty": item['qty_ordered']
+                })
+            
+            if not items:
+                logger.error(f"Nessun item spedibile trovato per ordine #{order_id}")
+                return None
+            
+            # Step 3: Crea shipment con tracking
+            endpoint = f"/rest/V1/order/{order_id}/ship"
+            
+            payload = {
+                "items": items,
+                "tracks": [{
+                    "track_number": tracking_number,
+                    "carrier_code": carrier_code,
+                    "title": carrier_title
+                }],
+                "notify": True  # Invia email al cliente
+            }
+            
+            result = self._make_request('POST', endpoint, json=payload)
+            
+            if result:
+                shipment_id = result if isinstance(result, int) else result.get('success')
+                logger.info(f"✅ Shipment creato per ordine #{order_id} - Tracking: {tracking_number} ({carrier_title})")
+                return shipment_id
+            else:
+                logger.error(f"❌ Errore creazione shipment per ordine #{order_id}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Errore create_shipment Magento: {e}")
+            return None
+    
+    def get_carrier_code(self, carrier_name: str) -> str:
+        """
+        Converte nome corriere in carrier_code Magento
+        
+        Args:
+            carrier_name: Nome corriere ('BRT', 'UPS', 'DHL', etc.)
+            
+        Returns:
+            Carrier code corrispondente
+        """
+        return self.CARRIERS.get(carrier_name.upper(), 'custom')

@@ -224,47 +224,85 @@ def get_pending_orders(bm_client, rf_client, oct_client) -> List[Dict]:
     return all_orders
 
 
-def disable_product_on_channels(sku: str, listing_id: str, bm_client, rf_client, oct_client) -> Dict:
-    """Disabilita un prodotto su tutti i canali impostando stock a 0"""
+def disable_product_on_channels(
+    sku: str, 
+    listing_id: str, 
+    bm_client, 
+    rf_client, 
+    oct_client,
+    magento_client=None
+) -> Dict:
+    """
+    Disabilita un prodotto su tutti i canali impostando stock a 0
+    
+    Args:
+        sku: SKU del prodotto
+        listing_id: ID listing BackMarket (opzionale)
+        bm_client: Client BackMarket
+        rf_client: Client Refurbed
+        oct_client: Client Octopia/CDiscount
+        magento_client: Client Magento (opzionale)
+        
+    Returns:
+        Dict con risultati per ogni canale
+    """
     results = {
         'backmarket': {'attempted': False, 'success': False, 'message': ''},
         'refurbed': {'attempted': False, 'success': False, 'message': ''},
-        'cdiscount': {'attempted': False, 'success': False, 'message': ''}
+        'cdiscount': {'attempted': False, 'success': False, 'message': ''},
+        'magento': {'attempted': False, 'success': False, 'message': ''}
     }
     
-    logger.info(f"Disabilitazione prodotto SKU {sku} su tutti i canali")
+    logger.info(f"🔄 Disabilitazione prodotto SKU {sku} su tutti i canali")
     
+    # BackMarket
     try:
         results['backmarket']['attempted'] = True
         id_to_disable = listing_id if listing_id else sku
         success = bm_client.disable_listing(id_to_disable)
         results['backmarket']['success'] = success
-        results['backmarket']['message'] = 'Disabilitato' if success else 'Errore disabilitazione'
+        results['backmarket']['message'] = '✅ Disabilitato' if success else '❌ Errore disabilitazione'
     except Exception as e:
-        results['backmarket']['message'] = f'Errore: {str(e)}'
+        results['backmarket']['message'] = f'❌ Errore: {str(e)}'
         logger.error(f"Errore disabilitazione BackMarket: {e}")
     
+    # Refurbed
     try:
         results['refurbed']['attempted'] = True
         success = rf_client.disable_offer(sku)
         results['refurbed']['success'] = success
-        results['refurbed']['message'] = 'Disabilitato' if success else 'Errore disabilitazione'
+        results['refurbed']['message'] = '✅ Disabilitato' if success else '❌ Errore disabilitazione'
     except Exception as e:
-        results['refurbed']['message'] = f'Errore: {str(e)}'
+        results['refurbed']['message'] = f'❌ Errore: {str(e)}'
         logger.error(f"Errore disabilitazione Refurbed: {e}")
     
+    # CDiscount
     try:
         results['cdiscount']['attempted'] = True
         success = oct_client.disable_offer(sku)
         results['cdiscount']['success'] = success
-        results['cdiscount']['message'] = 'Disabilitato' if success else 'Package XML richiesto'
+        results['cdiscount']['message'] = '✅ Disabilitato' if success else '⚠️ Package XML richiesto'
     except Exception as e:
-        results['cdiscount']['message'] = f'Errore: {str(e)}'
+        results['cdiscount']['message'] = f'❌ Errore: {str(e)}'
         logger.error(f"Errore disabilitazione CDiscount: {e}")
     
-    logger.info(f"Risultati disabilitazione SKU {sku}:")
+    # Magento (NUOVO!)
+    if magento_client:
+        try:
+            results['magento']['attempted'] = True
+            success = magento_client.disable_product(sku)
+            results['magento']['success'] = success
+            results['magento']['message'] = '✅ Disabilitato' if success else '❌ Errore disabilitazione'
+        except Exception as e:
+            results['magento']['message'] = f'❌ Errore: {str(e)}'
+            logger.error(f"Errore disabilitazione Magento: {e}")
+    else:
+        results['magento']['message'] = '⚠️ Client non disponibile'
+    
+    logger.info(f"📊 Risultati disabilitazione SKU {sku}:")
     logger.info(f"  - BackMarket: {results['backmarket']}")
     logger.info(f"  - Refurbed: {results['refurbed']}")
     logger.info(f"  - CDiscount: {results['cdiscount']}")
+    logger.info(f"  - Magento: {results['magento']}")
     
     return results

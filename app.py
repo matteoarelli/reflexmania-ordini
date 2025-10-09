@@ -19,11 +19,13 @@ from config import (
     OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID,
     MAGENTO_URL, MAGENTO_TOKEN,
     INVOICEX_CONFIG,
-    INVOICEX_API_URL, INVOICEX_API_KEY
+    INVOICEX_API_URL, INVOICEX_API_KEY,
+    ANASTASIA_DB_CONFIG, ANASTASIA_URL
 )
 from clients import BackMarketClient, RefurbishedClient, OctopiaClient
 from clients.invoicex_api import InvoiceXAPIClient
 from clients.magento_api import MagentoAPIClient
+from clients.anastasia_api import AnastasiaClient
 from services import (
     get_pending_orders, 
     disable_product_on_channels,
@@ -688,7 +690,20 @@ def dashboard():
                     let statusBadge = '';
                     
                     if (order.source === 'Magento') {
-                        actionButtons = `<button class="btn btn-success btn-small" onclick="createDDTOnly('${order.order_id}', '${order.source}')">Crea DDT</button>`;
+                         // Magento: Bottone Crea DDT + Bottone Spedito
+                        const entityId = order.entity_id || 0;
+                        actionButtons = `
+                            <button class="btn btn-success btn-small" 
+                                    onclick="createDDTOnly('${order.order_id}', '${order.source}')" 
+                                    style="margin-right: 5px;">
+                                Crea DDT
+                            </button>
+                            <button class="btn btn-primary btn-small" 
+                                    onclick="shipMagentoOrder('${order.order_id}', ${entityId})" 
+                                    style="background: #17a2b8;">
+                                📦 Spedito
+                            </button>
+                        `;
                         statusBadge = '<span class="badge badge-pending">Processing</span>';
                     } else if (order.source === 'BackMarket') {
                         const stateNum = order.status;
@@ -828,6 +843,66 @@ def dashboard():
             
             setInterval(refreshOrders, 120000); // Ordini ogni 2 minuti
             setInterval(refreshTickets, 30000);  // Ticket ogni 30 secondi
+        function shipMagentoOrder(orderId, entityId) {
+    // Mostra modal per inserire tracking + corriere
+    const trackingNumber = prompt(`Inserisci il numero di tracking per l'ordine Magento ${orderId}:`);
+    
+    if (!trackingNumber || trackingNumber.trim() === '') {
+        alert('Numero di tracking obbligatorio');
+        return;
+    }
+    
+    const carrier = prompt(`Inserisci il corriere (BRT, UPS, DHL, FEDEX, TNT, GLS):`, 'BRT');
+    
+    if (!carrier || carrier.trim() === '') {
+        alert('Corriere obbligatorio');
+        return;
+    }
+    
+    const validCarriers = ['BRT', 'UPS', 'DHL', 'FEDEX', 'TNT', 'GLS'];
+    const carrierUpper = carrier.trim().toUpperCase();
+    
+    if (!validCarriers.includes(carrierUpper)) {
+        alert(`Corriere non valido. Usa uno tra: ${validCarriers.join(', ')}`);
+        return;
+    }
+    
+    if (!confirm(`Confermi la spedizione dell'ordine Magento ${orderId}?\n\nTracking: ${trackingNumber}\nCorriere: ${carrierUpper}`)) {
+        return;
+    }
+    
+    document.getElementById('loading').style.display = 'block';
+    
+    fetch('/api/magento/ship_order', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            order_id: orderId,
+            entity_id: entityId,
+            tracking_number: trackingNumber,
+            carrier: carrierUpper
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alert(`✅ Ordine Magento ${orderId} spedito con successo!\n\n` +
+                  `Shipment ID: ${data.shipment_id}\n` +
+                  `Tracking: ${data.tracking_number}\n` +
+                  `Corriere: ${data.carrier}\n\n` +
+                  `I prodotti sono stati disabilitati su tutti i marketplace.`);
+            refreshOrders();
+        } else {
+            alert('❌ Errore: ' + data.error);
+            document.getElementById('loading').style.display = 'none';
+        }
+    })
+    .catch(err => {
+        alert('❌ Errore di connessione');
+        console.error(err);
+        document.getElementById('loading').style.display = 'none';
+    });
+}
         </script>
     </body>
     </html>
@@ -928,7 +1003,7 @@ def api_create_ddt_only():
             
             # Disabilita prodotti
             for item in order['items']:
-                disable_product_on_channels(item['sku'], '', bm_client, rf_client, oct_client)
+                disable_product_on_channels(item['sku'], '', bm_client, rf_client, oct_client, magento_client)
             
             # Crea DDT
             result = ddt_service.crea_ddt_da_ordine_marketplace(order, 'magento')
@@ -1092,7 +1167,60 @@ def get_magento_order(order_id):
     except Exception as e:
         logger.error(f"Errore recupero ordine Magento {order_id}: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
-
+@app.route('/api/magento/ship_order', methods=['POST'])
+def ship_magento_order():
+    """
+    API: Crea shipment per ordine Magento con tracking
+    """
+    try:
+        data = request.json
+        order_id = data.get('order_id')
+        entity_id = data.get('entity_id')
+        tracking_number = data.get('tracking_number')
+        carrier_name = data.get('carrier', 'BRT').upper()
+        
+        if not tracking_number or not tracking_number.strip():
+            return jsonify({'success': False, 'error': 'Numero di tracking obbligatorio'}), 400
+        
+        if not entity_id:
+            return jsonify({'success': False, 'error': 'Entity ID ordine mancante'}), 400
+        
+        carrier_code = magento_client.get_carrier_code(carrier_name)
+        
+        logger.info(f"Creazione shipment Magento ordine #{order_id} (entity_id: {entity_id})")
+        logger.info(f"Tracking: {tracking_number} - Corriere: {carrier_name} ({carrier_code})")
+        
+        shipment_id = magento_client.create_shipment(
+            order_id=entity_id,
+            tracking_number=tracking_number,
+            carrier_code=carrier_code,
+            carrier_title=carrier_name
+        )
+        
+        if shipment_id:
+            order = magento_service.get_order_by_id(order_id)
+            if order and order.get('items'):
+                for item in order['items']:
+                    sku = item.get('sku')
+                    if sku:
+                        disable_product_on_channels(
+                            sku, '', bm_client, rf_client, oct_client, magento_client
+                        )
+            
+            return jsonify({
+                'success': True,
+                'shipment_id': shipment_id,
+                'order_id': order_id,
+                'tracking_number': tracking_number,
+                'carrier': carrier_name,
+                'message': f'Ordine {order_id} spedito con successo'
+            }), 200
+        else:
+            return jsonify({'success': False, 'error': 'Errore creazione shipment su Magento'}), 500
+            
+    except Exception as e:
+        logger.error(f"Errore ship_magento_order: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # ============================================================================
 # API UNIFIED DASHBOARD
@@ -1112,6 +1240,7 @@ def get_all_orders():
         for order in magento_orders:
             magento_converted.append({
                 'order_id': order['order_id'],
+                'entity_id': order.get('entity_id', 0),  # AGGIUNTO!
                 'source': 'Magento',
                 'customer_name': f"{order['customer']['name']} {order['customer']['surname']}",
                 'customer_email': order['customer']['email'],

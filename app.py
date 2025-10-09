@@ -1030,7 +1030,7 @@ def api_create_ddt_only():
         
         for item in order['items']:
             listing_id = item.get('listing_id', '')
-            disable_product_on_channels(item['sku'], listing_id, bm_client, rf_client, oct_client)
+            disable_product_on_channels(item['sku'], listing_id, bm_client, rf_client, oct_client, magento_client)
         
         result = ddt_service.crea_ddt_da_ordine_marketplace(order, source.lower())
         if not result['success']:

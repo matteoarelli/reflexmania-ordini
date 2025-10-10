@@ -40,7 +40,6 @@ class MagentoAPIClient:
             )
             response.raise_for_status()
             
-            # Alcune chiamate Magento ritornano 200 senza body
             if response.status_code == 200 and response.text:
                 return response.json()
             elif response.status_code in [200, 201]:
@@ -55,10 +54,7 @@ class MagentoAPIClient:
             return None
     
     def get_processing_orders(self) -> List[Dict]:
-        """
-        Recupera tutti gli ordini in stato 'processing'
-        Filtro: status=processing
-        """
+        """Recupera tutti gli ordini in stato 'processing'"""
         endpoint = "/rest/V1/orders"
         
         params = {
@@ -77,9 +73,7 @@ class MagentoAPIClient:
         return []
     
     def get_order_details(self, entity_id: int) -> Optional[Dict]:
-        """
-        Recupera i dettagli completi di un ordine specifico
-        """
+        """Recupera i dettagli completi di un ordine specifico"""
         endpoint = f"/rest/V1/orders/{entity_id}"
         
         result = self._make_request('GET', endpoint)
@@ -92,9 +86,7 @@ class MagentoAPIClient:
         return None
     
     def get_all_orders_with_details(self) -> List[Dict]:
-        """
-        Recupera tutti gli ordini in processing con dettagli completi
-        """
+        """Recupera tutti gli ordini in processing con dettagli completi"""
         orders = self.get_processing_orders()
         detailed_orders = []
         
@@ -108,10 +100,7 @@ class MagentoAPIClient:
         return detailed_orders
     
     def update_order_status(self, entity_id: int, status: str) -> bool:
-        """
-        Aggiorna lo stato di un ordine
-        Utile per marcare ordini come 'complete' dopo creazione DDT
-        """
+        """Aggiorna lo stato di un ordine"""
         endpoint = f"/rest/V1/orders/{entity_id}"
         
         payload = {
@@ -131,22 +120,14 @@ class MagentoAPIClient:
         return False
     
     def disable_product(self, sku: str) -> bool:
-        """
-        Disabilita un prodotto su Magento e imposta qty = 0
-        - Disabilita SOLO sulla vista generale (default/all scope)
-        - Le altre store views erediteranno automaticamente se configurate con "Use Default Value"
-        - Imposta quantità a 0
-        
-        Status: 1 = Enabled, 2 = Disabled
-        """
+        """Disabilita un prodotto su Magento e imposta qty = 0"""
         try:
             from urllib.parse import quote
             sku_encoded = quote(sku, safe='')
             
             logger.info(f"🔄 Disabilitazione prodotto Magento: {sku}")
             
-            # STEP 1: Disabilita prodotto su scope DEFAULT/ALL (vista generale)
-            # Questo basta se le store views usano "Use Default Value"
+            # Disabilita prodotto su scope DEFAULT/ALL
             endpoint_default = f"/rest/all/V1/products/{sku_encoded}"
             payload_disable = {
                 "product": {
@@ -162,7 +143,7 @@ class MagentoAPIClient:
                 logger.warning(f"⚠️ Errore disabilitazione vista generale per {sku}")
                 return False
             
-            # STEP 2: Imposta quantità a 0 (usa API stock items)
+            # Imposta quantità a 0
             endpoint_stock = f"/rest/V1/products/{sku_encoded}/stockItems/1"
             payload_stock = {
                 "stockItem": {
@@ -195,7 +176,7 @@ class MagentoAPIClient:
         Crea una spedizione per un ordine Magento
         
         Args:
-            order_id: Entity ID dell'ordine
+            order_id: Entity ID dell'ordine (NON increment_id)
             tracking_number: Numero di tracking
             carrier_code: Codice corriere ('custom', 'ups', 'dhl', etc.)
             carrier_title: Nome corriere per visualizzazione ('BRT', 'UPS', 'DHL')
@@ -204,14 +185,16 @@ class MagentoAPIClient:
             Shipment ID se successo, None altrimenti
         """
         try:
-            # Step 1: Recupera dettagli ordine per ottenere gli items
+            logger.info(f"📦 create_shipment chiamato con order_id={order_id}, tracking={tracking_number}")
+            
+            # Recupera dettagli ordine
             order = self.get_order_details(order_id)
             
             if not order:
-                logger.error(f"Impossibile recuperare ordine #{order_id} per shipment")
+                logger.error(f"❌ Impossibile recuperare ordine #{order_id} per shipment")
                 return None
             
-            # Step 2: Prepara items per shipment (tutti gli item ordinati)
+            # Prepara items per shipment
             items = []
             for item in order.get('items', []):
                 # Salta item virtuali/bundle parents
@@ -220,16 +203,23 @@ class MagentoAPIClient:
                 if item.get('parent_item_id'):
                     continue
                 
-                items.append({
-                    "order_item_id": item['item_id'],
-                    "qty": item['qty_ordered']
-                })
+                qty_ordered = float(item.get('qty_ordered', 0))
+                qty_shipped = float(item.get('qty_shipped', 0))
+                qty_to_ship = qty_ordered - qty_shipped
+                
+                if qty_to_ship > 0:
+                    items.append({
+                        "order_item_id": item['item_id'],
+                        "qty": qty_to_ship
+                    })
             
             if not items:
-                logger.error(f"Nessun item spedibile trovato per ordine #{order_id}")
+                logger.error(f"❌ Nessun item spedibile trovato per ordine #{order_id}")
                 return None
             
-            # Step 3: Crea shipment con tracking
+            logger.info(f"📦 Items da spedire: {items}")
+            
+            # Crea shipment con tracking
             endpoint = f"/rest/V1/order/{order_id}/ship"
             
             payload = {
@@ -239,13 +229,15 @@ class MagentoAPIClient:
                     "carrier_code": carrier_code,
                     "title": carrier_title
                 }],
-                "notify": True  # Invia email al cliente
+                "notify": True
             }
+            
+            logger.info(f"📤 Payload shipment: {payload}")
             
             result = self._make_request('POST', endpoint, json=payload)
             
             if result:
-                shipment_id = result if isinstance(result, int) else result.get('success')
+                shipment_id = result if isinstance(result, int) else result.get('success', True)
                 logger.info(f"✅ Shipment creato per ordine #{order_id} - Tracking: {tracking_number} ({carrier_title})")
                 return shipment_id
             else:
@@ -254,16 +246,9 @@ class MagentoAPIClient:
                 
         except Exception as e:
             logger.error(f"❌ Errore create_shipment Magento: {e}")
+            logger.exception(e)
             return None
     
     def get_carrier_code(self, carrier_name: str) -> str:
-        """
-        Converte nome corriere in carrier_code Magento
-        
-        Args:
-            carrier_name: Nome corriere ('BRT', 'UPS', 'DHL', etc.)
-            
-        Returns:
-            Carrier code corrispondente
-        """
+        """Converte nome corriere in carrier_code Magento"""
         return self.CARRIERS.get(carrier_name.upper(), 'custom')

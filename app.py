@@ -1167,60 +1167,76 @@ def get_magento_order(order_id):
     except Exception as e:
         logger.error(f"Errore recupero ordine Magento {order_id}: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
-@app.route('/api/magento/ship_order', methods=['POST'])
-def ship_magento_order():
+@app.route('/api/magento/shipment', methods=['POST'])
+def create_magento_shipment():
     """
-    API: Crea shipment per ordine Magento con tracking
+    Crea shipment su Magento
+    
+    Body JSON:
+    {
+        "order_number": "000001507",  # Numero ordine Magento
+        "tracking_number": "179176131795499",
+        "carrier_code": "BRT"  # BRT, UPS, DHL, FEDEX, TNT, GLS
+    }
     """
     try:
         data = request.json
-        order_id = data.get('order_id')
-        entity_id = data.get('entity_id')
+        order_number = data.get('order_number')
         tracking_number = data.get('tracking_number')
-        carrier_name = data.get('carrier', 'BRT').upper()
+        carrier_code = data.get('carrier_code', 'custom')
         
-        if not tracking_number or not tracking_number.strip():
-            return jsonify({'success': False, 'error': 'Numero di tracking obbligatorio'}), 400
+        if not order_number or not tracking_number:
+            return jsonify({
+                'error': 'order_number e tracking_number sono obbligatori'
+            }), 400
         
-        if not entity_id:
-            return jsonify({'success': False, 'error': 'Entity ID ordine mancante'}), 400
+        # Trova entity_id da order_number
+        orders = magento_client.get_processing_orders()
+        order_data = None
         
-        carrier_code = magento_client.get_carrier_code(carrier_name)
+        for order in orders:
+            if order.get('increment_id') == order_number:
+                # Recupera dettagli completi ordine
+                entity_id = order.get('entity_id')
+                order_data = magento_client.get_order_details(entity_id)
+                break
         
-        logger.info(f"Creazione shipment Magento ordine #{order_id} (entity_id: {entity_id})")
-        logger.info(f"Tracking: {tracking_number} - Corriere: {carrier_name} ({carrier_code})")
+        if not order_data:
+            return jsonify({
+                'error': f'Ordine {order_number} non trovato'
+            }), 404
         
-        shipment_id = magento_client.create_shipment(
-            order_id=entity_id,
+        logger.info(f"Creazione shipment Magento ordine #{order_number} (entity_id: {order_data.get('entity_id')})")
+        logger.info(f"Tracking: {tracking_number} - Corriere: {carrier_code} (custom)")
+        
+        # Crea shipment passando l'intero order_data
+        result = magento_client.create_shipment(
+            order_data=order_data,  # Passa il dizionario completo
             tracking_number=tracking_number,
-            carrier_code=carrier_code,
-            carrier_title=carrier_name
+            carrier_code=carrier_code
         )
         
-        if shipment_id:
-            order = magento_service.get_order_by_id(order_id)
-            if order and order.get('items'):
-                for item in order['items']:
+        if result.get('success'):
+            logger.info(f"✅ Shipment Magento creato con successo: {result.get('shipment_id')}")
+            
+            # Disabilita prodotto dopo la spedizione
+            try:
+                for item in order_data.get('items', []):
                     sku = item.get('sku')
                     if sku:
-                        disable_product_on_channels(
-                            sku, '', bm_client, rf_client, oct_client, magento_client
-                        )
+                        disable_result = magento_client.disable_product_general_view(sku)
+                        logger.info(f"Disabilitazione prodotto {sku}: {disable_result}")
+            except Exception as e:
+                logger.error(f"Errore disabilitazione prodotto: {str(e)}")
             
-            return jsonify({
-                'success': True,
-                'shipment_id': shipment_id,
-                'order_id': order_id,
-                'tracking_number': tracking_number,
-                'carrier': carrier_name,
-                'message': f'Ordine {order_id} spedito con successo'
-            }), 200
+            return jsonify(result), 200
         else:
-            return jsonify({'success': False, 'error': 'Errore creazione shipment su Magento'}), 500
+            logger.error(f"❌ Errore creazione shipment: {result.get('error')}")
+            return jsonify(result), 500
             
     except Exception as e:
-        logger.error(f"Errore ship_magento_order: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        logger.error(f"Errore create_magento_shipment: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 # ============================================================================
 # API UNIFIED DASHBOARD

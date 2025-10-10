@@ -88,27 +88,37 @@ class BackMarketClient:
     
     def disable_listing(self, listing_id: str) -> bool:
         """
-        Disabilita un listing impostando stock a 0
-        FIX: Usa campo 'stock' invece di 'quantity'
+        Disabilita un listing su BackMarket
+        Prova prima DELETE, poi PUT con stock=0 come fallback
         """
         try:
             url = f"{self.base_url}/ws/listings/{listing_id}"
             
-            # FIX: Campo corretto è 'stock', non 'quantity'
-            data = {'stock': 0}
+            # TENTATIVO 1: DELETE (metodo preferito da BackMarket)
+            response = requests.delete(url, headers=self.headers)
             
+            if response.status_code in [200, 204]:
+                logger.info(f"✅ Listing BackMarket {listing_id} disabilitato (DELETE)")
+                return True
+            elif response.status_code == 404:
+                logger.warning(f"⚠️ Listing BackMarket {listing_id} non trovato - già disabilitato")
+                return True
+            
+            # TENTATIVO 2: PUT con stock=0 (fallback)
+            logger.info(f"⚠️ DELETE fallito (HTTP {response.status_code}), provo PUT con stock=0")
+            data = {'stock': 0}
             response = requests.put(url, headers=self.headers, json=data)
             
             if response.status_code in [200, 204]:
-                logger.info(f"✅ Listing BackMarket {listing_id} disabilitato (stock=0)")
+                logger.info(f"✅ Listing BackMarket {listing_id} disabilitato (PUT stock=0)")
                 return True
             elif response.status_code == 404:
-                logger.warning(f"⚠️ Listing BackMarket {listing_id} non trovato - potrebbe essere già disabilitato")
+                logger.warning(f"⚠️ Listing BackMarket {listing_id} non trovato")
                 return True
             else:
                 logger.warning(f"❌ BackMarket {listing_id}: HTTP {response.status_code} - {response.text}")
                 return False
-                
+            
         except Exception as e:
             logger.error(f"❌ Errore disabilitazione listing BackMarket: {e}")
             return False

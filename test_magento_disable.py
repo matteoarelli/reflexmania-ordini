@@ -66,17 +66,21 @@ except Exception as e:
 
 # STEP 3: Test disabilitazione (solo se prodotto esiste)
 if current_status is not None:
-    print(f"\n3️⃣ TEST DISABILITAZIONE PRODOTTO")
+    print(f"\n3️⃣ TEST DISABILITAZIONE PRODOTTO (SOLO VISTA GENERALE)")
     print("-" * 60)
     
     # Salva stato iniziale
     print(f"Status PRIMA disabilitazione:")
-    for store in ['default', 'all', 'it', 'en', 'de']:
+    status_before = {}
+    for store in ['all', 'it', 'en', 'de']:
         url_store = f"{MAGENTO_URL}/rest/{store}/V1/products/{sku_encoded}"
         try:
             resp = requests.get(url_store, headers=headers, timeout=10)
             if resp.status_code == 200:
-                status = resp.json().get('status')
+                data = resp.json()
+                status = data.get('status')
+                # Verifica se usa "Use Default Value" (non ha status esplicito per la vista)
+                status_before[store] = status
                 print(f"   - Store '{store}': Status = {status} (1=Enabled, 2=Disabled)")
         except:
             pass
@@ -84,7 +88,7 @@ if current_status is not None:
     # Inizializza client
     magento_client = MagentoAPIClient(MAGENTO_URL, MAGENTO_TOKEN)
     
-    print(f"\nEsecuzione disabilitazione completa...")
+    print(f"\n🔄 Esecuzione disabilitazione SOLO su vista generale...")
     success = magento_client.disable_product(TEST_SKU)
     
     if success:
@@ -93,7 +97,7 @@ if current_status is not None:
         # Verifica stato DOPO disabilitazione
         print(f"\nStatus DOPO disabilitazione:")
         all_disabled = True
-        for store in ['default', 'all', 'it', 'en', 'de']:
+        for store in ['all', 'it', 'en', 'de']:
             url_store = f"{MAGENTO_URL}/rest/{store}/V1/products/{sku_encoded}"
             try:
                 resp = requests.get(url_store, headers=headers, timeout=10)
@@ -106,7 +110,12 @@ if current_status is not None:
                     status_icon = "✅" if status == 2 else "❌"
                     qty_icon = "✅" if qty == 0 else "⚠️"
                     
-                    print(f"   - Store '{store}': {status_icon} Status={status}, {qty_icon} Qty={qty}, InStock={in_stock}")
+                    # Indica se eredita dalla vista generale
+                    inheritance = ""
+                    if store != 'all' and status == 2:
+                        inheritance = " (eredita da vista generale)"
+                    
+                    print(f"   - Store '{store}': {status_icon} Status={status}, {qty_icon} Qty={qty}, InStock={in_stock}{inheritance}")
                     
                     if status != 2 or qty != 0:
                         all_disabled = False
@@ -114,9 +123,10 @@ if current_status is not None:
                 print(f"   - Store '{store}': ⚠️ Errore verifica: {e}")
         
         if all_disabled:
-            print(f"\n✅ SUCCESSO! Prodotto disabilitato e qty=0 su TUTTE le viste!")
+            print(f"\n✅ SUCCESSO! Prodotto disabilitato su vista generale")
+            print(f"   Le altre viste erediteranno automaticamente se configurate con 'Use Default Value'")
         else:
-            print(f"\n⚠️ ATTENZIONE: Prodotto non completamente disabilitato su tutte le viste")
+            print(f"\n⚠️ ATTENZIONE: Prodotto non completamente disabilitato")
     else:
         print(f"❌ Disabilitazione fallita")
 else:

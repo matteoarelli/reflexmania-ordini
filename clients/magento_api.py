@@ -132,8 +132,9 @@ class MagentoAPIClient:
     
     def disable_product(self, sku: str) -> bool:
         """
-        Disabilita un prodotto su Magento (status = 2) e imposta qty = 0
-        - Disabilita su TUTTE le store views (default scope + ogni store)
+        Disabilita un prodotto su Magento e imposta qty = 0
+        - Disabilita SOLO sulla vista generale (default/all scope)
+        - Le altre store views erediteranno automaticamente se configurate con "Use Default Value"
         - Imposta quantità a 0
         
         Status: 1 = Enabled, 2 = Disabled
@@ -144,8 +145,9 @@ class MagentoAPIClient:
             
             logger.info(f"🔄 Disabilitazione prodotto Magento: {sku}")
             
-            # STEP 1: Disabilita prodotto su scope DEFAULT (vista generale)
-            endpoint_default = f"/rest/default/V1/products/{sku_encoded}"
+            # STEP 1: Disabilita prodotto su scope DEFAULT/ALL (vista generale)
+            # Questo basta se le store views usano "Use Default Value"
+            endpoint_default = f"/rest/all/V1/products/{sku_encoded}"
             payload_disable = {
                 "product": {
                     "sku": sku,
@@ -155,21 +157,12 @@ class MagentoAPIClient:
             
             result_default = self._make_request('PUT', endpoint_default, json=payload_disable)
             if result_default:
-                logger.info(f"✅ Prodotto {sku} disabilitato su vista DEFAULT")
+                logger.info(f"✅ Prodotto {sku} disabilitato su vista GENERALE (scope: all)")
             else:
-                logger.warning(f"⚠️ Errore disabilitazione vista DEFAULT per {sku}")
+                logger.warning(f"⚠️ Errore disabilitazione vista generale per {sku}")
+                return False
             
-            # STEP 2: Disabilita su TUTTE le altre store views
-            # Magento generalmente ha: default, it, en, de, fr, etc.
-            store_views = ['all', 'it', 'en', 'de']  # Aggiungi altre viste se necessario
-            
-            for store in store_views:
-                endpoint_store = f"/rest/{store}/V1/products/{sku_encoded}"
-                result_store = self._make_request('PUT', endpoint_store, json=payload_disable)
-                if result_store:
-                    logger.info(f"✅ Prodotto {sku} disabilitato su vista '{store}'")
-            
-            # STEP 3: Imposta quantità a 0 (usa API stock items)
+            # STEP 2: Imposta quantità a 0 (usa API stock items)
             endpoint_stock = f"/rest/V1/products/{sku_encoded}/stockItems/1"
             payload_stock = {
                 "stockItem": {

@@ -132,19 +132,29 @@ class RefurbishedClient:
                 logger.info(f"ℹ️  {msg}")
                 return True, msg
             
-            # Step 4: Esegui batch update
-            logger.info(f"\n🚀 Esecuzione batch update per {len(updates)} items...")
+            # Step 4: Esegui update
+            logger.info(f"\n🚀 Tentativo accettazione per {len(updates)} items...")
             
-            # PROVA PRIMA IL SINGOLO UPDATE (più affidabile)
+            # Strategia multi-tentativo
             if len(updates) == 1:
-                logger.info(f"📝 Usando UpdateOrderItemState singolo (più affidabile)...")
+                # TENTATIVO 1: UpdateOrderItemState (standard)
+                logger.info(f"📝 Tentativo 1: UpdateOrderItemState...")
                 success = self._update_single_item_state(updates[0])
+                
+                if not success:
+                    # TENTATIVO 2: UpdateOrderItem (alternativo)
+                    logger.info(f"⚠️ Tentativo 1 fallito, provo UpdateOrderItem...")
+                    success = self._update_order_item_alternative(updates[0])
+                
+                if not success:
+                    # TENTATIVO 3: Batch con singolo item
+                    logger.info(f"⚠️ Tentativo 2 fallito, provo BatchUpdate...")
+                    success = self._batch_update_items_state(updates)
             else:
-                logger.info(f"📝 Usando BatchUpdateOrderItemsState per {len(updates)} items...")
                 success = self._batch_update_items_state(updates)
             
             if not success:
-                return False, "Errore durante l'update su Refurbed API"
+                return False, "Tutti i tentativi di update sono falliti. Verifica manualmente su Refurbed."
             
             # Step 4.5: VERIFICA che l'update sia andato a buon fine
             logger.info(f"🔍 Verifica stato items dopo batch update...")
@@ -213,6 +223,96 @@ class RefurbishedClient:
             return None, "Timeout durante il recupero items"
         except Exception as e:
             return None, f"Errore recupero items: {str(e)}"
+    
+    def _update_order_item_alternative(self, update: Dict) -> bool:
+        """
+        Tentativo alternativo provando TUTTI i formati possibili
+        """
+        order_item_id = update['order_item_id']
+        state = update['state']
+        order_id = update.get('order_id', '')
+        
+        # TENTATIVO 1: Con wrapper "order_item"
+        try:
+            url = f"{self.base_url}/refb.merchant.v1.OrderItemService/UpdateOrderItem"
+            body = {
+                "order_item": {
+                    "id": order_item_id,
+                    "state": state
+                }
+            }
+            
+            logger.info(f"📤 Tentativo A - Con wrapper 'order_item': {body}")
+            response = requests.post(url, headers=self.headers, json=body, timeout=30)
+            logger.info(f"📥 Response: {response.status_code} - {response.text[:300]}")
+            
+            if response.status_code == 200:
+                logger.info(f"✅ Successo con formato A!")
+                return True
+        except Exception as e:
+            logger.error(f"Formato A fallito: {e}")
+        
+        # TENTATIVO 2: Senza 'order_item_id', solo 'id'
+        try:
+            url = f"{self.base_url}/refb.merchant.v1.OrderItemService/UpdateOrderItem"
+            body = {
+                "id": order_item_id,
+                "state": state
+            }
+            
+            logger.info(f"📤 Tentativo B - Solo 'id': {body}")
+            response = requests.post(url, headers=self.headers, json=body, timeout=30)
+            logger.info(f"📥 Response: {response.status_code} - {response.text[:300]}")
+            
+            if response.status_code == 200:
+                logger.info(f"✅ Successo con formato B!")
+                return True
+        except Exception as e:
+            logger.error(f"Formato B fallito: {e}")
+        
+        # TENTATIVO 3: Con 'identifier' object
+        try:
+            url = f"{self.base_url}/refb.merchant.v1.OrderItemService/UpdateOrderItem"
+            body = {
+                "identifier": {
+                    "order_item_id": order_item_id
+                },
+                "state": state
+            }
+            
+            logger.info(f"📤 Tentativo C - Con 'identifier': {body}")
+            response = requests.post(url, headers=self.headers, json=body, timeout=30)
+            logger.info(f"📥 Response: {response.status_code} - {response.text[:300]}")
+            
+            if response.status_code == 200:
+                logger.info(f"✅ Successo con formato C!")
+                return True
+        except Exception as e:
+            logger.error(f"Formato C fallito: {e}")
+        
+        # TENTATIVO 4: UpdateOrderItem con update_mask (gRPC style)
+        try:
+            url = f"{self.base_url}/refb.merchant.v1.OrderItemService/UpdateOrderItem"
+            body = {
+                "order_item_id": order_item_id,
+                "state": state,
+                "update_mask": {
+                    "paths": ["state"]
+                }
+            }
+            
+            logger.info(f"📤 Tentativo D - Con 'update_mask': {body}")
+            response = requests.post(url, headers=self.headers, json=body, timeout=30)
+            logger.info(f"📥 Response: {response.status_code} - {response.text[:300]}")
+            
+            if response.status_code == 200:
+                logger.info(f"✅ Successo con formato D!")
+                return True
+        except Exception as e:
+            logger.error(f"Formato D fallito: {e}")
+        
+        logger.error(f"❌ Tutti i formati alternativi hanno fallito")
+        return False
     
     def _update_single_item_state(self, update: Dict) -> bool:
         """

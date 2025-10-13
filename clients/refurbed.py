@@ -135,6 +135,25 @@ class RefurbishedClient:
             if not success:
                 return False, "Errore durante il batch update su Refurbed API"
             
+            # Step 4.5: VERIFICA che l'update sia andato a buon fine
+            logger.info(f"🔍 Verifica stato items dopo batch update...")
+            import time
+            time.sleep(2)  # Aspetta 2 secondi per propagazione
+            
+            items_after, error_after = self._get_order_items(order_id)
+            if items_after:
+                logger.info(f"📊 STATO ITEMS DOPO L'UPDATE:")
+                for item in items_after:
+                    item_id = item.get('id')
+                    new_state = item.get('state', 'UNKNOWN')
+                    sku = item.get('sku', 'N/A')
+                    logger.info(f"  📦 Item {item_id}: SKU={sku}, NUOVO STATO={new_state}")
+                    
+                    # Controlla se qualche item è rimasto in NEW
+                    if item_id in [u['order_item_id'] for u in updates] and new_state == 'NEW':
+                        logger.error(f"  ❌ Item {item_id} ancora in stato NEW dopo l'update!")
+                        return False, f"L'update API è stato accettato ma l'item {sku} è rimasto in stato NEW. Possibile problema con Refurbed API."
+            
             # Step 5: Costruisci messaggio di successo
             success_parts = []
             if updates:
@@ -190,7 +209,12 @@ class RefurbishedClient:
             url = f"{self.base_url}/refb.merchant.v1.OrderItemService/BatchUpdateOrderItemsState"
             body = {"updates": updates}
             
+            logger.info(f"📤 Request body: {body}")
+            
             response = requests.post(url, headers=self.headers, json=body, timeout=30)
+            
+            logger.info(f"📥 Response status: {response.status_code}")
+            logger.info(f"📥 Response body: {response.text[:1000]}")
             
             if response.status_code == 200:
                 logger.info(f"✅ Batch update completato con successo")

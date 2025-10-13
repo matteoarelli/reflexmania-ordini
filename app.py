@@ -1661,7 +1661,132 @@ def verify_refurbed_order_state(order_id):
     except Exception as e:
         logger.error(f"Errore verifica: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+# Aggiungi questo endpoint TEMPORANEO in app.py per testare formati diversi
+
+@app.route('/api/test/refurbed/formats/<order_id>', methods=['POST'])
+def test_refurbed_api_formats(order_id):
+    """
+    Test diversi formati di richiesta per capire quale funziona
+    """
+    import requests
+    
+    try:
+        # 1. Recupera items
+        items_url = f"{rf_client.base_url}/refb.merchant.v1.OrderItemService/ListOrderItemsByOrder"
+        items_response = requests.post(
+            items_url,
+            headers=rf_client.headers,
+            json={"order_id": order_id},
+            timeout=30
+        )
         
+        if items_response.status_code != 200:
+            return jsonify({'error': 'Impossibile recuperare items'}), 500
+        
+        items = items_response.json().get('order_items', [])
+        if not items:
+            return jsonify({'error': 'Nessun item trovato'}), 404
+        
+        item = items[0]
+        item_id = item.get('id')
+        
+        logger.info(f"\n{'='*60}")
+        logger.info(f"🧪 TEST FORMATI API REFURBED")
+        logger.info(f"Order ID: {order_id}")
+        logger.info(f"Item ID: {item_id}")
+        logger.info(f"{'='*60}\n")
+        
+        # Test diversi formati
+        results = {}
+        
+        # FORMATO 1: Batch con updates array
+        logger.info("📝 Test Formato 1: BatchUpdateOrderItemsState con 'updates'")
+        url1 = f"{rf_client.base_url}/refb.merchant.v1.OrderItemService/BatchUpdateOrderItemsState"
+        body1 = {
+            "updates": [
+                {
+                    "order_item_id": item_id,
+                    "state": "ACCEPTED"
+                }
+            ]
+        }
+        
+        response1 = requests.post(url1, headers=rf_client.headers, json=body1, timeout=30)
+        results['formato_1_batch'] = {
+            'status': response1.status_code,
+            'body': body1,
+            'response': response1.text[:500]
+        }
+        logger.info(f"   Status: {response1.status_code}")
+        logger.info(f"   Response: {response1.text[:300]}")
+        
+        # Attendi un po'
+        import time
+        time.sleep(2)
+        
+        # FORMATO 2: UpdateOrderItemState singolo
+        logger.info("\n📝 Test Formato 2: UpdateOrderItemState singolo")
+        url2 = f"{rf_client.base_url}/refb.merchant.v1.OrderItemService/UpdateOrderItemState"
+        body2 = {
+            "order_item_id": item_id,
+            "state": "ACCEPTED"
+        }
+        
+        response2 = requests.post(url2, headers=rf_client.headers, json=body2, timeout=30)
+        results['formato_2_single'] = {
+            'status': response2.status_code,
+            'body': body2,
+            'response': response2.text[:500]
+        }
+        logger.info(f"   Status: {response2.status_code}")
+        logger.info(f"   Response: {response2.text[:300]}")
+        
+        # Attendi
+        time.sleep(2)
+        
+        # FORMATO 3: UpdateOrderItem con state field
+        logger.info("\n📝 Test Formato 3: UpdateOrderItem con state")
+        url3 = f"{rf_client.base_url}/refb.merchant.v1.OrderItemService/UpdateOrderItem"
+        body3 = {
+            "order_item_id": item_id,
+            "state": "ACCEPTED"
+        }
+        
+        response3 = requests.post(url3, headers=rf_client.headers, json=body3, timeout=30)
+        results['formato_3_update_item'] = {
+            'status': response3.status_code,
+            'body': body3,
+            'response': response3.text[:500]
+        }
+        logger.info(f"   Status: {response3.status_code}")
+        logger.info(f"   Response: {response3.text[:300]}")
+        
+        # Verifica stato finale
+        time.sleep(3)
+        logger.info("\n🔍 Verifica stato finale...")
+        
+        final_response = requests.post(items_url, headers=rf_client.headers, json={"order_id": order_id}, timeout=30)
+        if final_response.status_code == 200:
+            final_items = final_response.json().get('order_items', [])
+            final_state = final_items[0].get('state') if final_items else 'UNKNOWN'
+            logger.info(f"   Stato finale item: {final_state}")
+            results['final_state'] = final_state
+        
+        logger.info(f"\n{'='*60}\n")
+        
+        return jsonify({
+            'success': True,
+            'order_id': order_id,
+            'item_id': item_id,
+            'test_results': results,
+            'conclusion': f"Stato finale: {results.get('final_state', 'N/A')}"
+        })
+        
+    except Exception as e:
+        logger.error(f"Errore test: {e}")
+        logger.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+            
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Client Refurbed API - Conforme alla documentazione ufficiale
-Gestione corretta degli stati: NEW → ACCEPTED → SHIPPED
+Client Refurbed API - Versione completa con accettazione e spedizione
 """
 import requests
 import logging
@@ -91,8 +90,6 @@ class RefurbishedClient:
                 current_state = item.get('state', 'UNKNOWN')
                 sku = item.get('sku', 'N/A')
                 
-                # Log TUTTO il contenuto dell'item per debug
-                logger.info(f"  📦 Item completo: {item}")
                 logger.info(f"  📦 Item {item_id} (type: {type(item_id).__name__})")
                 logger.info(f"     └─ SKU: {sku}")
                 logger.info(f"     └─ Stato attuale: {current_state}")
@@ -101,7 +98,7 @@ class RefurbishedClient:
                 if current_state in ['NEW', 'PENDING']:
                     # IMPORTANTE: Includi order_id nell'update
                     updates.append({
-                        "order_id": order_id,  # ← AGGIUNTO!
+                        "order_id": order_id,
                         "order_item_id": str(item_id), 
                         "state": "ACCEPTED"
                     })
@@ -109,14 +106,14 @@ class RefurbishedClient:
                     
                 elif current_state == 'ACCEPTED':
                     already_accepted.append(sku)
-                    logger.info(f"     └─ ℹ️  Già in stato ACCEPTED")
+                    logger.info(f"     └─ ℹ️ Già in stato ACCEPTED")
                     
                 elif current_state in ['SHIPPED', 'RETURNED', 'REJECTED', 'CANCELLED']:
                     not_acceptable.append((sku, current_state))
-                    logger.info(f"     └─ ⚠️  Stato finale: {current_state} (non modificabile)")
+                    logger.info(f"     └─ ⚠️ Stato finale: {current_state} (non modificabile)")
                     
                 else:
-                    logger.warning(f"     └─ ⚠️  Stato sconosciuto: {current_state}")
+                    logger.warning(f"     └─ ⚠️ Stato sconosciuto: {current_state}")
             
             # Step 3: Valuta se procedere
             if not updates and not already_accepted:
@@ -129,7 +126,7 @@ class RefurbishedClient:
             if not updates and already_accepted:
                 # Tutti già accettati
                 msg = f"✅ Ordine già completamente accettato ({len(already_accepted)} items)"
-                logger.info(f"ℹ️  {msg}")
+                logger.info(f"ℹ️ {msg}")
                 return True, msg
             
             # Step 4: Esegui update con formato corretto
@@ -191,6 +188,60 @@ class RefurbishedClient:
             logger.error(f"❌ {error_msg}")
             logger.exception(e)
             return False, error_msg
+    
+    def mark_as_shipped(self, order_item_id: str, tracking_url: str, serial_number: str = None) -> Tuple[bool, str]:
+        """
+        Marca un order item come spedito con tracking URL e numero seriale
+        
+        Args:
+            order_item_id: ID dell'order item
+            tracking_url: URL completo di tracking (es: https://www.ups.com/track?...)
+            serial_number: Numero seriale/IMEI (opzionale ma consigliato)
+        
+        Returns:
+            Tuple[bool, str]: (success, message)
+        """
+        try:
+            logger.info(f"📦 REFURBED: Marcatura spedizione item {order_item_id}")
+            logger.info(f"🔗 Tracking URL: {tracking_url}")
+            if serial_number:
+                logger.info(f"🔢 Serial/IMEI: {serial_number}")
+            
+            url = f"{self.base_url}/refb.merchant.v1.OrderItemService/UpdateOrderItemState"
+            
+            # Formato corretto: "id" (non "order_item_id")
+            body = {
+                "id": str(order_item_id),
+                "state": "SHIPPED",
+                "parcel_tracking_url": tracking_url
+            }
+            
+            # Aggiungi seriale se fornito
+            if serial_number and serial_number.strip():
+                body["item_identifier"] = serial_number.strip()
+                logger.info(f"📝 Seriale incluso nella richiesta")
+            
+            logger.info(f"📤 Request: {body}")
+            
+            response = requests.post(url, headers=self.headers, json=body, timeout=30)
+            
+            logger.info(f"📥 Response status: {response.status_code}")
+            logger.info(f"📥 Response: {response.text[:500]}")
+            
+            if response.status_code == 200:
+                logger.info(f"✅ Item {order_item_id} marcato come spedito")
+                msg = f"Item spedito con successo"
+                if serial_number:
+                    msg += f" (Seriale: {serial_number})"
+                return True, msg
+            else:
+                error = f"HTTP {response.status_code}: {response.text[:200]}"
+                logger.error(f"❌ {error}")
+                return False, error
+                
+        except Exception as e:
+            logger.error(f"❌ Errore mark_as_shipped: {e}")
+            return False, str(e)
     
     def _get_order_items(self, order_id: str) -> Tuple[Optional[List[Dict]], Optional[str]]:
         """Recupera gli order items di un ordine"""
@@ -262,12 +313,10 @@ class RefurbishedClient:
             
             logger.info(f"📤 Request URL: {url}")
             logger.info(f"📤 Request body: {body}")
-            logger.info(f"📤 Headers: {self.headers}")
             
             response = requests.post(url, headers=self.headers, json=body, timeout=30)
             
             logger.info(f"📥 Response status: {response.status_code}")
-            logger.info(f"📥 Response headers: {dict(response.headers)}")
             logger.info(f"📥 Response body: {response.text[:1000]}")
             
             # Controlla se ci sono errori nella risposta
@@ -307,7 +356,12 @@ class RefurbishedClient:
             return False
     
     def _verify_order_state(self, order_id: str) -> str:
-        """Verifica lo stato finale dell'ordine"""
+        """
+        Verifica lo stato finale dell'ordine
+        
+        Returns:
+            str: Stato dell'ordine o stringa vuota se errore
+        """
         try:
             url = f"{self.base_url}/refb.merchant.v1.OrderService/GetOrder"
             body = {"order_id": order_id}
@@ -321,51 +375,8 @@ class RefurbishedClient:
                 return state
             return ""
         except Exception as e:
-            logger.warning(f"⚠️  Impossibile verificare stato: {e}")
+            logger.warning(f"⚠️ Impossibile verificare stato: {e}")
             return ""
-    
-    def mark_as_shipped(self, order_item_id: str, tracking_url: str) -> Tuple[bool, str]:
-        """
-        Marca un order item come spedito con tracking URL
-        
-        Args:
-            order_item_id: ID dell'order item
-            tracking_url: URL completo di tracking (es: https://www.ups.com/track?...)
-        
-        Returns:
-            Tuple[bool, str]: (success, message)
-        """
-        try:
-            logger.info(f"📦 REFURBED: Marcatura spedizione item {order_item_id}")
-            logger.info(f"🔗 Tracking URL: {tracking_url}")
-            
-            url = f"{self.base_url}/refb.merchant.v1.OrderItemService/UpdateOrderItemState"
-            
-            # Formato corretto: "id" (non "order_item_id")
-            body = {
-                "id": str(order_item_id),
-                "state": "SHIPPED",
-                "parcel_tracking_url": tracking_url
-            }
-            
-            logger.info(f"📤 Request: {body}")
-            
-            response = requests.post(url, headers=self.headers, json=body, timeout=30)
-            
-            logger.info(f"📥 Response status: {response.status_code}")
-            logger.info(f"📥 Response: {response.text[:500]}")
-            
-            if response.status_code == 200:
-                logger.info(f"✅ Item {order_item_id} marcato come spedito")
-                return True, f"Item spedito con successo (tracking: {tracking_url[:50]}...)"
-            else:
-                error = f"HTTP {response.status_code}: {response.text[:200]}"
-                logger.error(f"❌ {error}")
-                return False, error
-                
-        except Exception as e:
-            logger.error(f"❌ Errore mark_as_shipped: {e}")
-            return False, str(e)
     
     def disable_offer(self, sku: str) -> bool:
         """Disabilita offerta (stock = 0)"""
@@ -380,7 +391,7 @@ class RefurbishedClient:
                 logger.info(f"✅ Offerta SKU {sku} disabilitata")
                 return True
             else:
-                logger.warning(f"⚠️  SKU {sku}: HTTP {response.status_code}")
+                logger.warning(f"⚠️ SKU {sku}: HTTP {response.status_code}")
                 return False
             
         except Exception as e:

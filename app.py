@@ -833,13 +833,61 @@ def dashboard():
             }
             
             function acceptOrderOnly(orderId, source) {
-                if (!confirm(`Confermi l'accettazione dell'ordine ${orderId} su ${source}?`)) return;
-                document.getElementById('loading').style.display = 'block';
-                fetch('/api/accept_order_only', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({order_id: orderId, source: source}) })
-                .then(r => r.json()).then(data => { if (data.success) { alert(`Ordine ${orderId} accettato con successo su ${source}!`); refreshOrders(); } else { alert('Errore: ' + data.error); document.getElementById('loading').style.display = 'none'; } })
-                .catch(err => { alert('Errore di connessione'); console.error(err); document.getElementById('loading').style.display = 'none'; });
+            if (!confirm(`Confermi l'accettazione dell'ordine ${orderId} su ${source}?`)) {
+            return;
+            }
+    
+            document.getElementById('loading').style.display = 'block';
+    
+            fetch('/api/accept_order_only', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+            order_id: orderId,
+            source: source
+            })
+            })
+            .then(response => {
+            // Leggi sempre la risposta, anche in caso di errore
+            return response.json().then(data => ({
+            ok: response.ok,
+            status: response.status,
+            data: data
+            }));
+            })
+            .then(result => {
+            document.getElementById('loading').style.display = 'none';
+        
+            if (result.ok) {
+            // ✅ SUCCESSO
+            const message = result.data.message || `Ordine ${orderId} accettato con successo`;
+            alert(`✅ ${message}\n\nLa tabella ordini verrà aggiornata tra 3 secondi...`);
+            
+            // Forza refresh dopo 3 secondi per dare tempo a Refurbed
+            setTimeout(() => {
+                console.log('🔄 Refresh automatico dopo accettazione...');
+                refreshOrders();
+            }, 3000);
+        } else {
+            // ❌ ERRORE
+            const errorMsg = result.data.error || 'Errore sconosciuto';
+            const details = result.data.details || '';
+            
+            let fullMessage = `❌ Errore durante l'accettazione:\n\n${errorMsg}`;
+            if (details) {
+                fullMessage += `\n\n${details}`;
             }
             
+            alert(fullMessage);
+            console.error('Errore accettazione:', result.data);
+        }
+    })
+    .catch(err => {
+        document.getElementById('loading').style.display = 'none';
+        alert(`❌ Errore di connessione:\n\n${err.message}`);
+        console.error('Errore fetch:', err);
+    });
+}           
             function createDDTOnly(orderId, source) {
                 if (!confirm(`Confermi la creazione del DDT per l'ordine ${orderId}?\n\nQuesto:\n- Disabiliterà i prodotti su tutti i canali\n- Creerà il DDT su InvoiceX`)) return;
                 document.getElementById('loading').style.display = 'block';
@@ -1516,6 +1564,104 @@ def test_accept_refurbed(order_id):
             'error': str(e),
             'order_id': order_id
         }), 500
+
+# Aggiungi questo endpoint in app.py per verificare lo stato REALE
+
+@app.route('/api/refurbed/verify/<order_id>')
+def verify_refurbed_order_state(order_id):
+    """
+    Verifica lo stato REALE di un ordine su Refurbed
+    senza cache, direttamente dalle API
+    """
+    try:
+        import requests
+        
+        logger.info(f"🔍 Verifica stato ordine {order_id} su Refurbed API...")
+        
+        # 1. Recupera ordine completo
+        order_url = f"{rf_client.base_url}/refb.merchant.v1.OrderService/GetOrder"
+        order_body = {"order_id": order_id}
+        
+        order_response = requests.post(
+            order_url, 
+            headers=rf_client.headers, 
+            json=order_body, 
+            timeout=30
+        )
+        
+        if order_response.status_code != 200:
+            return jsonify({
+                'success': False,
+                'error': f'Errore API: HTTP {order_response.status_code}'
+            }), 500
+        
+        order_data = order_response.json()
+        order = order_data.get('order', {})
+        
+        # 2. Recupera tutti gli items
+        items_url = f"{rf_client.base_url}/refb.merchant.v1.OrderItemService/ListOrderItemsByOrder"
+        items_body = {"order_id": order_id}
+        
+        items_response = requests.post(
+            items_url,
+            headers=rf_client.headers,
+            json=items_body,
+            timeout=30
+        )
+        
+        items = []
+        if items_response.status_code == 200:
+            items_data = items_response.json()
+            items = items_data.get('order_items', [])
+        
+        # 3. Analizza stati
+        items_analysis = []
+        for item in items:
+            items_analysis.append({
+                'id': item.get('id'),
+                'sku': item.get('sku'),
+                'state': item.get('state'),
+                'name': item.get('name', 'N/A')
+            })
+        
+        order_state = order.get('state', 'UNKNOWN')
+        
+        # 4. Verifica coerenza
+        all_accepted = all(i['state'] == 'ACCEPTED' for i in items_analysis)
+        has_new = any(i['state'] == 'NEW' for i in items_analysis)
+        
+        expected_state = 'UNKNOWN'
+        if has_new:
+            expected_state = 'NEW'
+        elif all_accepted:
+            expected_state = 'ACCEPTED'
+        elif any(i['state'] == 'ACCEPTED' for i in items_analysis):
+            expected_state = 'ACCEPTED'
+        
+        state_mismatch = (expected_state != order_state) and (expected_state != 'UNKNOWN')
+        
+        return jsonify({
+            'success': True,
+            'order_id': order_id,
+            'current_state': order_state,
+            'expected_state': expected_state,
+            'state_mismatch': state_mismatch,
+            'items_count': len(items_analysis),
+            'items': items_analysis,
+            'analysis': {
+                'all_accepted': all_accepted,
+                'has_new_items': has_new,
+                'calculation_rule': 'At least one item ACCEPTED and no items NEW = Order ACCEPTED',
+                'conclusion': '✅ Ordine correttamente in stato ACCEPTED' if order_state == 'ACCEPTED' 
+                             else f'⚠️ Ordine ancora in stato {order_state} - potrebbe essere in aggiornamento'
+            },
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Errore verifica: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+        
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)

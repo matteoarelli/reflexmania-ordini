@@ -91,7 +91,9 @@ class RefurbishedClient:
                 current_state = item.get('state', 'UNKNOWN')
                 sku = item.get('sku', 'N/A')
                 
-                logger.info(f"  📦 Item {item_id}")
+                # Log TUTTO il contenuto dell'item per debug
+                logger.info(f"  📦 Item completo: {item}")
+                logger.info(f"  📦 Item {item_id} (type: {type(item_id).__name__})")
                 logger.info(f"     └─ SKU: {sku}")
                 logger.info(f"     └─ Stato attuale: {current_state}")
                 
@@ -209,16 +211,43 @@ class RefurbishedClient:
             url = f"{self.base_url}/refb.merchant.v1.OrderItemService/BatchUpdateOrderItemsState"
             body = {"updates": updates}
             
+            logger.info(f"📤 Request URL: {url}")
             logger.info(f"📤 Request body: {body}")
+            logger.info(f"📤 Headers: {self.headers}")
             
             response = requests.post(url, headers=self.headers, json=body, timeout=30)
             
             logger.info(f"📥 Response status: {response.status_code}")
+            logger.info(f"📥 Response headers: {dict(response.headers)}")
             logger.info(f"📥 Response body: {response.text[:1000]}")
             
+            # Controlla se ci sono errori nella risposta
             if response.status_code == 200:
-                logger.info(f"✅ Batch update completato con successo")
-                return True
+                try:
+                    response_data = response.json()
+                    results = response_data.get('results', [])
+                    
+                    # Verifica se ci sono errori nei risultati
+                    errors = []
+                    for idx, result in enumerate(results):
+                        status = result.get('status', {})
+                        code = status.get('code', 0)
+                        message = status.get('message', '')
+                        
+                        if code != 0:  # code 0 = success in gRPC
+                            errors.append(f"Item {idx}: {message} (code {code})")
+                            logger.error(f"❌ Errore item {idx}: {message}")
+                    
+                    if errors:
+                        logger.error(f"❌ Batch update ha restituito errori: {'; '.join(errors)}")
+                        return False
+                    
+                    logger.info(f"✅ Batch update completato con successo")
+                    return True
+                except:
+                    # Se non riusciamo a parsare JSON, assumiamo successo
+                    logger.info(f"✅ Batch update completato (response non JSON)")
+                    return True
             else:
                 logger.error(f"❌ Batch update fallito: HTTP {response.status_code}")
                 logger.error(f"Response: {response.text[:500]}")

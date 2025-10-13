@@ -1144,17 +1144,39 @@ def api_mark_shipped():
                 tracking_url = generate_tracking_url(carrier, tracking_number)
                 logger.info(f"🔗 URL generato: {tracking_url}")
             
-            all_orders = get_pending_orders(bm_client, rf_client, oct_client)
-            order = next((o for o in all_orders if o['order_id'] == order_id and o['source'] == source), None)
+            # Recupera items DIRETTAMENTE da Refurbed API
+            logger.info(f"🔍 Recupero items per ordine {order_id} da Refurbed API...")
             
-            if not order:
-                return jsonify({'success': False, 'error': 'Ordine non trovato'}), 404
+            items_url = f"{rf_client.base_url}/refb.merchant.v1.OrderItemService/ListOrderItemsByOrder"
+            items_body = {"order_id": order_id}
+            
+            import requests
+            items_response = requests.post(
+                items_url,
+                headers=rf_client.headers,
+                json=items_body,
+                timeout=30
+            )
+            
+            if items_response.status_code != 200:
+                return jsonify({
+                    'success': False,
+                    'error': f'Impossibile recuperare items ordine: HTTP {items_response.status_code}'
+                }), 500
+            
+            items_data = items_response.json()
+            items = items_data.get('order_items', [])
+            
+            if not items:
+                return jsonify({'success': False, 'error': 'Nessun item trovato per questo ordine'}), 404
+            
+            logger.info(f"✅ Trovati {len(items)} items per ordine {order_id}")
             
             success_count = 0
             errors = []
             
-            for item in order.get('items', []):
-                item_id = item.get('listing_id') or item.get('id')
+            for item in items:
+                item_id = item.get('id')  # ← Usa 'id' direttamente dall'API Refurbed
                 if item_id:
                     success, message = rf_client.mark_as_shipped(item_id, tracking_url)
                     if success:
@@ -1180,7 +1202,7 @@ def api_mark_shipped():
                 'message': f'{success_count} items spediti su Refurbed'
             })
         
-        # Magento
+        # Magento (STESSO LIVELLO di "elif source == 'Refurbed'")
         elif source == 'Magento':
             order = magento_service.get_order_by_id(order_id)
             if order and order.get('entity_id'):
@@ -1203,8 +1225,7 @@ def api_mark_shipped():
         logger.error(f"❌ Errore mark_shipped: {e}")
         logger.exception(e)
         return jsonify({'success': False, 'error': str(e)}), 500
-
-
+    
 @app.route('/api/accept_order_only', methods=['POST'])
 def api_accept_order_only():
     """API: accetta solo l'ordine sul marketplace (senza DDT)"""

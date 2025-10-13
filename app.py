@@ -32,7 +32,136 @@ from services import (
 )
 from services.ddt_service import DDTService
 from services.magento_service import MagentoService
+# Aggiungi questa funzione utility all'inizio di app.py (dopo gli import)
 
+def generate_tracking_url(carrier: str, tracking_number: str) -> str:
+    """Genera l'URL di tracking completo basato sul corriere"""
+    carrier = carrier.upper().strip()
+    tracking_number = tracking_number.strip()
+    
+    tracking_urls = {
+        'UPS': f'https://www.ups.com/track?loc=en_US&tracknum={tracking_number}',
+        'DHL': f'https://mydhl.express.dhl/it/it/tracking.html#/results?id={tracking_number}',
+        'BRT': f'https://vas.brt.it/vas/sped_det_show.hsm?chisono={tracking_number}',
+        'GLS': f'https://gls-group.eu/IT/it/ricerca-pacchi?match={tracking_number}',
+        'TNT': f'https://www.tnt.com/express/it_it/site/tracking.html?searchType=con&cons={tracking_number}',
+        'FEDEX': f'https://www.fedex.com/fedextrack/?trknbr={tracking_number}',
+        'POSTE': f'https://www.poste.it/cerca/index.html#/risultati-spedizioni/{tracking_number}',
+        'SDA': f'https://www.sda.it/wps/portal/Servizi_online/dettaglio-spedizione?locale=it&tracing.letteraVettura={tracking_number}'
+    }
+    
+    return tracking_urls.get(carrier, tracking_number)
+
+
+# Sostituisci la route /api/mark_shipped esistente con questa:
+
+@app.route('/api/mark_shipped', methods=['POST'])
+def api_mark_shipped():
+    """API: marca ordine come spedito e comunica tracking al marketplace"""
+    try:
+        data = request.json
+        order_id = data.get('order_id')
+        source = data.get('source')
+        tracking_number = data.get('tracking_number')
+        tracking_url = data.get('tracking_url', '')
+        
+        if not tracking_number:
+            return jsonify({'success': False, 'error': 'Tracking number obbligatorio'}), 400
+        
+        logger.info(f"\n{'='*60}")
+        logger.info(f"📦 Richiesta spedizione ordine")
+        logger.info(f"   Order ID: {order_id}")
+        logger.info(f"   Source: {source}")
+        logger.info(f"   Tracking: {tracking_number}")
+        logger.info(f"{'='*60}\n")
+        
+        # BackMarket
+        if source == 'BackMarket':
+            # BackMarket accetta URL o numero
+            final_tracking = tracking_url if tracking_url else tracking_number
+            
+            if not bm_client.mark_as_shipped(order_id, tracking_number, final_tracking):
+                return jsonify({'success': False, 'error': 'Errore comunicazione tracking'}), 500
+            
+            return jsonify({
+                'success': True,
+                'order_id': order_id,
+                'tracking_number': tracking_number,
+                'message': 'Ordine marcato come spedito su BackMarket'
+            })
+        
+        # Refurbed
+        elif source == 'Refurbed':
+            # Recupera il corriere (chiedi all'utente o usa default)
+            carrier = data.get('carrier', 'BRT').upper()
+            
+            # Genera URL tracking se non fornito
+            if not tracking_url:
+                tracking_url = generate_tracking_url(carrier, tracking_number)
+                logger.info(f"🔗 URL generato: {tracking_url}")
+            
+            # Recupera gli items dell'ordine
+            all_orders = get_pending_orders(bm_client, rf_client, oct_client)
+            order = next((o for o in all_orders if o['order_id'] == order_id and o['source'] == source), None)
+            
+            if not order:
+                return jsonify({'success': False, 'error': 'Ordine non trovato'}), 404
+            
+            # Marca ogni item come spedito
+            success_count = 0
+            errors = []
+            
+            for item in order.get('items', []):
+                item_id = item.get('listing_id') or item.get('id')
+                if item_id:
+                    success, message = rf_client.mark_as_shipped(item_id, tracking_url)
+                    if success:
+                        success_count += 1
+                        logger.info(f"✅ Item {item_id} spedito")
+                    else:
+                        errors.append(f"Item {item_id}: {message}")
+                        logger.error(f"❌ Item {item_id}: {message}")
+            
+            if success_count == 0:
+                return jsonify({
+                    'success': False, 
+                    'error': f"Nessun item spedito. Errori: {'; '.join(errors)}"
+                }), 500
+            
+            return jsonify({
+                'success': True,
+                'order_id': order_id,
+                'tracking_number': tracking_number,
+                'tracking_url': tracking_url,
+                'carrier': carrier,
+                'items_shipped': success_count,
+                'message': f'{success_count} items spediti su Refurbed'
+            })
+        
+        # Magento
+        elif source == 'Magento':
+            order = magento_service.get_order_by_id(order_id)
+            if order and order.get('entity_id'):
+                magento_service.mark_order_as_completed(order['entity_id'])
+            
+            return jsonify({
+                'success': True,
+                'order_id': order_id,
+                'tracking_number': tracking_number,
+                'message': 'Ordine marcato come spedito'
+            })
+        
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Marketplace {source} non supportato'
+            }), 400
+        
+    except Exception as e:
+        logger.error(f"❌ Errore mark_shipped: {e}")
+        logger.exception(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+    
 # Configurazione logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -822,15 +951,114 @@ def dashboard():
             
             // ========== ALTRE FUNZIONI ==========
             function markAsShipped(orderId, source) {
-                const trackingNumber = prompt(`Inserisci il numero di tracking per l'ordine ${orderId}:`);
-                if (!trackingNumber || trackingNumber.trim() === '') { alert('Numero di tracking obbligatorio'); return; }
-                const trackingUrl = prompt(`Inserisci l'URL di tracking (opzionale):`);
-                if (!confirm(`Confermi la spedizione dell'ordine ${orderId}?\n\nTracking: ${trackingNumber}`)) return;
-                document.getElementById('loading').style.display = 'block';
-                fetch('/api/mark_shipped', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({order_id: orderId, source: source, tracking_number: trackingNumber, tracking_url: trackingUrl || ''}) })
-                .then(r => r.json()).then(data => { if (data.success) { alert(`Ordine ${orderId} marcato come spedito!\n\nTracking comunicato al marketplace.`); refreshOrders(); } else { alert('Errore: ' + data.error); document.getElementById('loading').style.display = 'none'; } })
-                .catch(err => { alert('Errore di connessione'); console.error(err); document.getElementById('loading').style.display = 'none'; });
+    const trackingNumber = prompt(`Inserisci il numero di tracking per l'ordine ${orderId}:`);
+    
+    if (!trackingNumber || trackingNumber.trim() === '') {
+        alert('Numero di tracking obbligatorio');
+        return;
+    }
+    
+    let carrier = 'BRT';  // Default
+    let trackingUrl = '';
+    
+    // Per Refurbed, chiedi anche il corriere
+    if (source === 'Refurbed') {
+        carrier = prompt(
+            `Seleziona il corriere per ${orderId}:\n\n` +
+            `Digita uno tra:\n` +
+            `- UPS\n` +
+            `- DHL\n` +
+            `- BRT (default)\n` +
+            `- GLS\n` +
+            `- TNT\n` +
+            `- FEDEX\n` +
+            `- POSTE\n` +
+            `- SDA`,
+            'BRT'
+        );
+        
+        if (!carrier || carrier.trim() === '') {
+            carrier = 'BRT';
+        }
+        
+        carrier = carrier.toUpperCase().trim();
+        
+        // Validazione corriere
+        const validCarriers = ['UPS', 'DHL', 'BRT', 'GLS', 'TNT', 'FEDEX', 'POSTE', 'SDA'];
+        if (!validCarriers.includes(carrier)) {
+            alert(`Corriere non valido. Usa uno tra: ${validCarriers.join(', ')}`);
+            return;
+        }
+    } else {
+        // Per altri marketplace, chiedi l'URL (opzionale)
+        trackingUrl = prompt(`Inserisci l'URL di tracking (opzionale):`) || '';
+    }
+    
+    const confirmMsg = source === 'Refurbed' 
+        ? `Confermi la spedizione dell'ordine ${orderId}?\n\nTracking: ${trackingNumber}\nCorriere: ${carrier}`
+        : `Confermi la spedizione dell'ordine ${orderId}?\n\nTracking: ${trackingNumber}`;
+    
+    if (!confirm(confirmMsg)) {
+        return;
+    }
+    
+    document.getElementById('loading').style.display = 'block';
+    
+    const requestBody = {
+        order_id: orderId,
+        source: source,
+        tracking_number: trackingNumber
+    };
+    
+    if (source === 'Refurbed') {
+        requestBody.carrier = carrier;
+    } else if (trackingUrl) {
+        requestBody.tracking_url = trackingUrl;
+    }
+    
+    fetch('/api/mark_shipped', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(requestBody)
+    })
+    .then(response => {
+        return response.json().then(data => ({
+            ok: response.ok,
+            data: data
+        }));
+    })
+    .then(result => {
+        document.getElementById('loading').style.display = 'none';
+        
+        if (result.ok) {
+            let message = `✅ Ordine ${orderId} marcato come spedito!\n\nTracking: ${trackingNumber}`;
+            
+            if (result.data.tracking_url) {
+                message += `\n\nURL tracking: ${result.data.tracking_url}`;
             }
+            
+            if (result.data.carrier) {
+                message += `\nCorriere: ${result.data.carrier}`;
+            }
+            
+            if (result.data.items_shipped) {
+                message += `\n\nItems spediti: ${result.data.items_shipped}`;
+            }
+            
+            message += '\n\nTracking comunicato al marketplace.';
+            
+            alert(message);
+            refreshOrders();
+        } else {
+            alert(`❌ Errore: ${result.data.error || 'Errore sconosciuto'}`);
+        }
+    })
+    .catch(err => {
+        document.getElementById('loading').style.display = 'none';
+        alert(`❌ Errore di connessione: ${err.message}`);
+        console.error(err);
+    });
+}
             
             function acceptOrderOnly(orderId, source) {
             if (!confirm(`Confermi l'accettazione dell'ordine ${orderId} su ${source}?`)) {

@@ -324,6 +324,49 @@ class RefurbishedClient:
             logger.warning(f"⚠️  Impossibile verificare stato: {e}")
             return ""
     
+    def mark_as_shipped(self, order_item_id: str, tracking_url: str) -> Tuple[bool, str]:
+        """
+        Marca un order item come spedito con tracking URL
+        
+        Args:
+            order_item_id: ID dell'order item
+            tracking_url: URL completo di tracking (es: https://www.ups.com/track?...)
+        
+        Returns:
+            Tuple[bool, str]: (success, message)
+        """
+        try:
+            logger.info(f"📦 REFURBED: Marcatura spedizione item {order_item_id}")
+            logger.info(f"🔗 Tracking URL: {tracking_url}")
+            
+            url = f"{self.base_url}/refb.merchant.v1.OrderItemService/UpdateOrderItemState"
+            
+            # Formato corretto: "id" (non "order_item_id")
+            body = {
+                "id": str(order_item_id),
+                "state": "SHIPPED",
+                "parcel_tracking_url": tracking_url
+            }
+            
+            logger.info(f"📤 Request: {body}")
+            
+            response = requests.post(url, headers=self.headers, json=body, timeout=30)
+            
+            logger.info(f"📥 Response status: {response.status_code}")
+            logger.info(f"📥 Response: {response.text[:500]}")
+            
+            if response.status_code == 200:
+                logger.info(f"✅ Item {order_item_id} marcato come spedito")
+                return True, f"Item spedito con successo (tracking: {tracking_url[:50]}...)"
+            else:
+                error = f"HTTP {response.status_code}: {response.text[:200]}"
+                logger.error(f"❌ {error}")
+                return False, error
+                
+        except Exception as e:
+            logger.error(f"❌ Errore mark_as_shipped: {e}")
+            return False, str(e)
+    
     def disable_offer(self, sku: str) -> bool:
         """Disabilita offerta (stock = 0)"""
         try:

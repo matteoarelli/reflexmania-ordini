@@ -99,8 +99,10 @@ class RefurbishedClient:
                 
                 # Regole di transizione dalla documentazione ufficiale
                 if current_state in ['NEW', 'PENDING']:
+                    # IMPORTANTE: Includi order_id nell'update
                     updates.append({
-                        "order_item_id": item_id, 
+                        "order_id": order_id,  # ← AGGIUNTO!
+                        "order_item_id": str(item_id), 
                         "state": "ACCEPTED"
                     })
                     logger.info(f"     └─ ✅ Sarà accettato (transizione valida)")
@@ -220,11 +222,15 @@ class RefurbishedClient:
         try:
             url = f"{self.base_url}/refb.merchant.v1.OrderItemService/UpdateOrderItemState"
             
-            # Body per singolo update
+            # Body per singolo update - INCLUDI order_id se presente
             body = {
                 "order_item_id": update['order_item_id'],
                 "state": update['state']
             }
+            
+            # Aggiungi order_id se presente nell'update
+            if 'order_id' in update:
+                body['order_id'] = update['order_id']
             
             logger.info(f"📤 Request URL: {url}")
             logger.info(f"📤 Request body: {body}")

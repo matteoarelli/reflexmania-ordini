@@ -56,6 +56,9 @@ invoicex_api_client = InvoiceXAPIClient(
 
 # Inizializza DDT Service
 ddt_service = DDTService(invoicex_api_client)
+# ============================================================================
+# AGGIUNGERE DOPO LA RIGA 48 (dopo inizializzazione ddt_service)
+# ============================================================================
 
 # Import client Anastasia
 from clients.anastasia_api import AnastasiaClient
@@ -612,7 +615,7 @@ def dashboard():
                     
                     <div class="ticket-list" id="ticket-list">
                         <div class="empty-state">
-                            <div class="empty-state-icon">🔭</div>
+                            <div class="empty-state-icon">📭</div>
                             <div>Caricamento ticket...</div>
                         </div>
                     </div>
@@ -623,7 +626,8 @@ def dashboard():
                 </div>
             </div>
         </div>
-<script>
+        
+        <script>
             let orders = [];
             
             // ========== ORDINI ==========
@@ -686,6 +690,7 @@ def dashboard():
                     let statusBadge = '';
                     
                     if (order.source === 'Magento') {
+                         // Magento: Bottone Crea DDT + Bottone Spedito
                         const entityId = order.entity_id || 0;
                         actionButtons = `
                             <button class="btn btn-success btn-small" 
@@ -753,82 +758,14 @@ def dashboard():
                 }).join('');
             }
             
-            // ========== MAGENTO SHIPMENT ==========
-            function shipMagentoOrder(orderNumber, entityId) {
-                const trackingNumber = prompt(`Inserisci il numero di tracking per l'ordine Magento ${orderNumber}:`);
-                
-                if (!trackingNumber || trackingNumber.trim() === '') {
-                    alert('Numero di tracking obbligatorio');
-                    return;
-                }
-                
-                const carrier = prompt(`Inserisci il corriere (BRT, UPS, DHL, FEDEX, TNT, GLS):`, 'BRT');
-                
-                if (!carrier || carrier.trim() === '') {
-                    alert('Corriere obbligatorio');
-                    return;
-                }
-                
-                const validCarriers = ['BRT', 'UPS', 'DHL', 'FEDEX', 'TNT', 'GLS'];
-                const carrierUpper = carrier.trim().toUpperCase();
-                
-                if (!validCarriers.includes(carrierUpper)) {
-                    alert(`Corriere non valido. Usa uno tra: ${validCarriers.join(', ')}`);
-                    return;
-                }
-                
-                if (!confirm(`Confermi la spedizione dell'ordine Magento ${orderNumber}?\n\nTracking: ${trackingNumber}\nCorriere: ${carrierUpper}`)) {
-                    return;
-                }
-                
-                document.getElementById('loading').style.display = 'block';
-                
-                fetch('/api/magento/ship_order', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        order_id: orderNumber,
-                        entity_id: entityId,
-                        tracking_number: trackingNumber,
-                        carrier: carrierUpper
-                    })
-                })
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    document.getElementById('loading').style.display = 'none';
-                    
-                    if (data.success) {
-                        alert(`✅ Ordine Magento ${orderNumber} spedito con successo!\n\n` +
-                              `Shipment ID: ${data.shipment_id}\n` +
-                              `Tracking: ${data.tracking_number}\n` +
-                              `Corriere: ${data.carrier}\n\n` +
-                              `I prodotti sono stati disabilitati su tutti i marketplace.`);
-                        refreshOrders();
-                    } else {
-                        alert('❌ Errore: ' + (data.error || 'Errore sconosciuto'));
-                    }
-                })
-                .catch(err => {
-                    document.getElementById('loading').style.display = 'none';
-                    alert('❌ Errore di connessione: ' + err.message);
-                    console.error('Errore shipment:', err);
-                });
-            }
-            
-            // ========== ALTRE FUNZIONI ==========
             function markAsShipped(orderId, source) {
                 const trackingNumber = prompt(`Inserisci il numero di tracking per l'ordine ${orderId}:`);
                 if (!trackingNumber || trackingNumber.trim() === '') { alert('Numero di tracking obbligatorio'); return; }
                 const trackingUrl = prompt(`Inserisci l'URL di tracking (opzionale):`);
-                if (!confirm(`Confermi la spedizione dell'ordine ${orderId}?\n\nTracking: ${trackingNumber}`)) return;
+                if (!confirm(`Confermi la spedizione dell'ordine ${orderId}?\\n\\nTracking: ${trackingNumber}`)) return;
                 document.getElementById('loading').style.display = 'block';
                 fetch('/api/mark_shipped', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({order_id: orderId, source: source, tracking_number: trackingNumber, tracking_url: trackingUrl || ''}) })
-                .then(r => r.json()).then(data => { if (data.success) { alert(`Ordine ${orderId} marcato come spedito!\n\nTracking comunicato al marketplace.`); refreshOrders(); } else { alert('Errore: ' + data.error); document.getElementById('loading').style.display = 'none'; } })
+                .then(r => r.json()).then(data => { if (data.success) { alert(`Ordine ${orderId} marcato come spedito!\\n\\nTracking comunicato al marketplace.`); refreshOrders(); } else { alert('Errore: ' + data.error); document.getElementById('loading').style.display = 'none'; } })
                 .catch(err => { alert('Errore di connessione'); console.error(err); document.getElementById('loading').style.display = 'none'; });
             }
             
@@ -841,10 +778,10 @@ def dashboard():
             }
             
             function createDDTOnly(orderId, source) {
-                if (!confirm(`Confermi la creazione del DDT per l'ordine ${orderId}?\n\nQuesto:\n- Disabiliterà i prodotti su tutti i canali\n- Creerà il DDT su InvoiceX`)) return;
+                if (!confirm(`Confermi la creazione del DDT per l'ordine ${orderId}?\\n\\nQuesto:\\n- Disabiliterà i prodotti su tutti i canali\\n- Creerà il DDT su InvoiceX`)) return;
                 document.getElementById('loading').style.display = 'block';
                 fetch('/api/create_ddt_only', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({order_id: orderId, source: source}) })
-                .then(r => r.json()).then(data => { if (data.success) { alert(`DDT creato con successo!\n\nNumero DDT: ${data.ddt_number}\n\nL'ordine è ora pronto per la spedizione.`); refreshOrders(); } else { alert('Errore: ' + data.error); document.getElementById('loading').style.display = 'none'; } })
+                .then(r => r.json()).then(data => { if (data.success) { alert(`DDT creato con successo!\\n\\nNumero DDT: ${data.ddt_number}\\n\\nL'ordine è ora pronto per la spedizione.`); refreshOrders(); } else { alert('Errore: ' + data.error); document.getElementById('loading').style.display = 'none'; } })
                 .catch(err => { alert('Errore di connessione'); console.error(err); document.getElementById('loading').style.display = 'none'; });
             }
             
@@ -852,6 +789,7 @@ def dashboard():
             
             // ========== ANASTASIA TICKETS ==========
             function refreshTickets() {
+                // Statistiche
                 fetch('/api/tickets/stats')
                     .then(r => r.json())
                     .then(data => {
@@ -869,6 +807,7 @@ def dashboard():
                         document.getElementById('anastasia-error').style.display = 'block';
                     });
                 
+                // Lista ticket aperti
                 fetch('/api/tickets/open?limit=5')
                     .then(r => r.json())
                     .then(data => {
@@ -904,6 +843,66 @@ def dashboard():
             
             setInterval(refreshOrders, 120000); // Ordini ogni 2 minuti
             setInterval(refreshTickets, 30000);  // Ticket ogni 30 secondi
+        function shipMagentoOrder(orderId, entityId) {
+    // Mostra modal per inserire tracking + corriere
+    const trackingNumber = prompt(`Inserisci il numero di tracking per l'ordine Magento ${orderId}:`);
+    
+    if (!trackingNumber || trackingNumber.trim() === '') {
+        alert('Numero di tracking obbligatorio');
+        return;
+    }
+    
+    const carrier = prompt(`Inserisci il corriere (BRT, UPS, DHL, FEDEX, TNT, GLS):`, 'BRT');
+    
+    if (!carrier || carrier.trim() === '') {
+        alert('Corriere obbligatorio');
+        return;
+    }
+    
+    const validCarriers = ['BRT', 'UPS', 'DHL', 'FEDEX', 'TNT', 'GLS'];
+    const carrierUpper = carrier.trim().toUpperCase();
+    
+    if (!validCarriers.includes(carrierUpper)) {
+        alert(`Corriere non valido. Usa uno tra: ${validCarriers.join(', ')}`);
+        return;
+    }
+    
+    if (!confirm(`Confermi la spedizione dell'ordine Magento ${orderId}?\n\nTracking: ${trackingNumber}\nCorriere: ${carrierUpper}`)) {
+        return;
+    }
+    
+    document.getElementById('loading').style.display = 'block';
+    
+    fetch('/api/magento/ship_order', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            order_id: orderId,
+            entity_id: entityId,
+            tracking_number: trackingNumber,
+            carrier: carrierUpper
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alert(`✅ Ordine Magento ${orderId} spedito con successo!\n\n` +
+                  `Shipment ID: ${data.shipment_id}\n` +
+                  `Tracking: ${data.tracking_number}\n` +
+                  `Corriere: ${data.carrier}\n\n` +
+                  `I prodotti sono stati disabilitati su tutti i marketplace.`);
+            refreshOrders();
+        } else {
+            alert('❌ Errore: ' + data.error);
+            document.getElementById('loading').style.display = 'none';
+        }
+    })
+    .catch(err => {
+        alert('❌ Errore di connessione');
+        console.error(err);
+        document.getElementById('loading').style.display = 'none';
+    });
+}
         </script>
     </body>
     </html>
@@ -944,6 +943,7 @@ def api_mark_shipped():
             if not bm_client.mark_as_shipped(order_id, tracking_number, tracking_url):
                 return jsonify({'success': False, 'error': 'Errore comunicazione tracking'}), 500
         
+        # Magento: marca come complete dopo spedizione
         if source == 'Magento':
             order = magento_service.get_order_by_id(order_id)
             if order and order.get('entity_id'):
@@ -963,84 +963,29 @@ def api_mark_shipped():
 
 @app.route('/api/accept_order_only', methods=['POST'])
 def api_accept_order_only():
-    """
-    API: accetta solo l'ordine sul marketplace (senza DDT)
-    Gestione corretta degli stati secondo le API ufficiali
-    """
+    """API: accetta solo l'ordine sul marketplace (senza DDT)"""
     try:
         data = request.json
         order_id = data.get('order_id')
         source = data.get('source')
         
-        if not order_id or not source:
-            return jsonify({
-                'success': False,
-                'error': 'Parametri mancanti: order_id e source richiesti'
-            }), 400
-        
-        logger.info(f"\n{'='*60}")
-        logger.info(f"📨 Richiesta accettazione ordine")
-        logger.info(f"   Order ID: {order_id}")
-        logger.info(f"   Source: {source}")
-        logger.info(f"{'='*60}\n")
-        
-        # BackMarket
         if source == 'BackMarket':
-            success = bm_client.accept_order(order_id)
-            
-            if not success:
-                logger.error(f"❌ BackMarket: Accettazione fallita per {order_id}")
-                return jsonify({
-                    'success': False, 
-                    'error': 'Impossibile accettare l\'ordine su BackMarket. Verifica lo stato dell\'ordine.'
-                }), 500
-            
-            logger.info(f"✅ BackMarket: Ordine {order_id} accettato")
-            return jsonify({
-                'success': True,
-                'order_id': order_id,
-                'source': source,
-                'message': f'✅ Ordine {order_id} accettato su BackMarket'
-            })
-        
-        # Refurbed (con gestione corretta return tuple)
+            if not bm_client.accept_order(order_id):
+                return jsonify({'success': False, 'error': 'Errore accettazione ordine'}), 500
         elif source == 'Refurbed':
-            success, message = rf_client.accept_order(order_id)
-            
-            if not success:
-                logger.error(f"❌ Refurbed: {message}")
-                return jsonify({
-                    'success': False, 
-                    'error': message,
-                    'order_id': order_id,
-                    'source': source,
-                    'details': 'Verifica lo stato degli order items. Gli ordini possono essere accettati solo se in stato NEW o PENDING.'
-                }), 500
-            
-            logger.info(f"✅ Refurbed: {message}")
-            return jsonify({
-                'success': True,
-                'order_id': order_id,
-                'source': source,
-                'message': message
-            })
+            if not rf_client.accept_order(order_id):
+                return jsonify({'success': False, 'error': 'Errore accettazione ordine'}), 500
         
-        # Marketplace non supportato
-        else:
-            logger.warning(f"⚠️  Marketplace {source} non supporta accettazione ordini")
-            return jsonify({
-                'success': False,
-                'error': f'Il marketplace {source} non supporta l\'accettazione ordini tramite questa funzione'
-            }), 400
+        return jsonify({
+            'success': True,
+            'order_id': order_id,
+            'message': 'Ordine accettato sul marketplace'
+        })
         
     except Exception as e:
-        logger.error(f"❌ Errore imprevisto in accept_order_only: {e}")
-        logger.exception(e)
-        return jsonify({
-            'success': False, 
-            'error': f'Errore del server: {str(e)}',
-            'type': 'server_error'
-        }), 500
+        logger.error(f"Errore accept_order_only: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @app.route('/api/create_ddt_only', methods=['POST'])
 def api_create_ddt_only():
@@ -1050,18 +995,22 @@ def api_create_ddt_only():
         order_id = data.get('order_id')
         source = data.get('source')
         
+        # Gestione Magento
         if source == 'Magento':
             order = magento_service.get_order_by_id(order_id)
             if not order:
                 return jsonify({'success': False, 'error': 'Ordine Magento non trovato'}), 404
             
+            # Disabilita prodotti
             for item in order['items']:
                 disable_product_on_channels(item['sku'], '', bm_client, rf_client, oct_client, magento_client)
             
+            # Crea DDT
             result = ddt_service.crea_ddt_da_ordine_marketplace(order, 'magento')
             if not result['success']:
                 return jsonify({'success': False, 'error': result.get('error', 'Errore creazione DDT')}), 500
             
+            # Marca ordine come completato
             if order.get('entity_id'):
                 magento_service.mark_order_as_completed(order['entity_id'])
             
@@ -1072,6 +1021,7 @@ def api_create_ddt_only():
                 'message': 'DDT creato con successo'
             })
         
+        # Gestione Marketplace (BackMarket, Refurbed, CDiscount)
         all_orders = get_pending_orders(bm_client, rf_client, oct_client)
         order = next((o for o in all_orders if o['order_id'] == order_id and o['source'] == source), None)
         
@@ -1106,6 +1056,7 @@ def api_packlink_csv():
         marketplace_orders = get_pending_orders(bm_client, rf_client, oct_client)
         magento_orders = magento_service.get_all_pending_orders()
         
+        # Converti ordini Magento nel formato compatibile con CSV
         magento_converted = []
         for order in magento_orders:
             magento_converted.append({
@@ -1216,63 +1167,76 @@ def get_magento_order(order_id):
     except Exception as e:
         logger.error(f"Errore recupero ordine Magento {order_id}: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/magento/ship_order', methods=['POST'])
-def ship_magento_order():
-    """API: Crea shipment per ordine Magento con tracking"""
+@app.route('/api/magento/shipment', methods=['POST'])
+def create_magento_shipment():
+    """
+    Crea shipment su Magento
+    
+    Body JSON:
+    {
+        "order_number": "000001507",  # Numero ordine Magento
+        "tracking_number": "179176131795499",
+        "carrier_code": "BRT"  # BRT, UPS, DHL, FEDEX, TNT, GLS
+    }
+    """
     try:
         data = request.json
-        order_id = data.get('order_id')
-        entity_id = data.get('entity_id')
+        order_number = data.get('order_number')
         tracking_number = data.get('tracking_number')
-        carrier_name = data.get('carrier', 'BRT').upper()
+        carrier_code = data.get('carrier_code', 'custom')
         
-        if not tracking_number or not tracking_number.strip():
-            return jsonify({'success': False, 'error': 'Numero di tracking obbligatorio'}), 400
+        if not order_number or not tracking_number:
+            return jsonify({
+                'error': 'order_number e tracking_number sono obbligatori'
+            }), 400
         
-        if not entity_id:
-            return jsonify({'success': False, 'error': 'Entity ID ordine mancante'}), 400
+        # Trova entity_id da order_number
+        orders = magento_client.get_processing_orders()
+        order_data = None
         
-        carrier_code = magento_client.get_carrier_code(carrier_name)
+        for order in orders:
+            if order.get('increment_id') == order_number:
+                # Recupera dettagli completi ordine
+                entity_id = order.get('entity_id')
+                order_data = magento_client.get_order_details(entity_id)
+                break
         
-        logger.info(f"📦 Creazione shipment Magento ordine #{order_id} (entity_id: {entity_id})")
-        logger.info(f"🚚 Tracking: {tracking_number} - Corriere: {carrier_name} ({carrier_code})")
+        if not order_data:
+            return jsonify({
+                'error': f'Ordine {order_number} non trovato'
+            }), 404
         
-        shipment_id = magento_client.create_shipment(
-            order_id=entity_id,
+        logger.info(f"Creazione shipment Magento ordine #{order_number} (entity_id: {order_data.get('entity_id')})")
+        logger.info(f"Tracking: {tracking_number} - Corriere: {carrier_code} (custom)")
+        
+        # Crea shipment passando l'intero order_data
+        result = magento_client.create_shipment(
+            order_data=order_data,  # Passa il dizionario completo
             tracking_number=tracking_number,
-            carrier_code=carrier_code,
-            carrier_title=carrier_name
+            carrier_code=carrier_code
         )
         
-        if shipment_id:
-            order = magento_service.get_order_by_id(order_id)
-            if order and order.get('items'):
-                for item in order['items']:
+        if result.get('success'):
+            logger.info(f"✅ Shipment Magento creato con successo: {result.get('shipment_id')}")
+            
+            # Disabilita prodotto dopo la spedizione
+            try:
+                for item in order_data.get('items', []):
                     sku = item.get('sku')
                     if sku:
-                        logger.info(f"🔧 Disabilitazione prodotto {sku} su tutti i marketplace")
-                        disable_product_on_channels(
-                            sku, '', bm_client, rf_client, oct_client, magento_client
-                        )
+                        disable_result = magento_client.disable_product_general_view(sku)
+                        logger.info(f"Disabilitazione prodotto {sku}: {disable_result}")
+            except Exception as e:
+                logger.error(f"Errore disabilitazione prodotto: {str(e)}")
             
-            return jsonify({
-                'success': True,
-                'shipment_id': shipment_id,
-                'order_id': order_id,
-                'tracking_number': tracking_number,
-                'carrier': carrier_name,
-                'message': f'✅ Ordine {order_id} spedito con successo'
-            }), 200
+            return jsonify(result), 200
         else:
-            return jsonify({'success': False, 'error': 'Errore creazione shipment su Magento'}), 500
+            logger.error(f"❌ Errore creazione shipment: {result.get('error')}")
+            return jsonify(result), 500
             
     except Exception as e:
-        logger.error(f"❌ Errore ship_magento_order: {str(e)}")
-        logger.exception(e)
-        return jsonify({'success': False, 'error': str(e)}), 500
-
+        logger.error(f"Errore create_magento_shipment: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 # ============================================================================
 # API UNIFIED DASHBOARD
@@ -1282,14 +1246,17 @@ def ship_magento_order():
 def get_all_orders():
     """API: recupera TUTTI gli ordini da tutti i canali"""
     try:
+        # Ordini marketplace
         marketplace_orders = get_pending_orders(bm_client, rf_client, oct_client)
+        
+        # Ordini Magento - converti nel formato compatibile con la dashboard
         magento_orders = magento_service.get_all_pending_orders()
         magento_converted = []
         
         for order in magento_orders:
             magento_converted.append({
                 'order_id': order['order_id'],
-                'entity_id': order.get('entity_id', 0),
+                'entity_id': order.get('entity_id', 0),  # AGGIUNTO!
                 'source': 'Magento',
                 'customer_name': f"{order['customer']['name']} {order['customer']['surname']}",
                 'customer_email': order['customer']['email'],
@@ -1353,169 +1320,7 @@ def health():
             'anastasia': anastasia_status
         }
     })
-# ============================================================================
-# DEBUG ENDPOINTS - Aggiungi in app.py prima di if __name__ == '__main__'
-# ============================================================================
 
-@app.route('/api/debug/refurbed/<order_id>')
-def debug_refurbed_order(order_id):
-    """
-    Endpoint debug per analizzare un ordine Refurbed
-    Mostra stato ordine, items e transizioni possibili
-    """
-    try:
-        import requests  # Assicurati che sia importato in cima al file
-        
-        logger.info(f"🔍 Debug richiesto per ordine Refurbed {order_id}")
-        
-        # Recupera dettagli ordine
-        order = rf_client.get_order_details(order_id)
-        
-        if not order:
-            return jsonify({
-                'success': False,
-                'error': 'Ordine non trovato o errore API Refurbed',
-                'order_id': order_id
-            }), 404
-        
-        # Recupera order items
-        list_url = f"{rf_client.base_url}/refb.merchant.v1.OrderItemService/ListOrderItemsByOrder"
-        list_body = {"order_id": order_id}
-        
-        response = requests.post(list_url, headers=rf_client.headers, json=list_body, timeout=30)
-        
-        items_info = []
-        can_accept_any = False
-        
-        if response.status_code == 200:
-            items_data = response.json()
-            items = items_data.get('order_items', [])
-            
-            # Regole di transizione dalla documentazione ufficiale
-            state_transitions = {
-                'NEW': ['REJECTED', 'CANCELLED', 'ACCEPTED'],
-                'PENDING': ['REJECTED', 'CANCELLED', 'ACCEPTED'],
-                'ACCEPTED': ['CANCELLED', 'SHIPPED'],
-                'REJECTED': [],  # Stato finale
-                'CANCELLED': [],  # Stato finale
-                'SHIPPED': ['RETURNED'],
-                'RETURNED': []  # Stato finale
-            }
-            
-            for item in items:
-                current_state = item.get('state', 'UNKNOWN')
-                possible_transitions = state_transitions.get(current_state, [])
-                can_accept = 'ACCEPTED' in possible_transitions
-                
-                if can_accept:
-                    can_accept_any = True
-                
-                items_info.append({
-                    'id': item.get('id'),
-                    'sku': item.get('sku'),
-                    'state': current_state,
-                    'name': item.get('name', 'N/A'),
-                    'quantity': item.get('quantity', 0),
-                    'can_accept': can_accept,
-                    'possible_transitions': possible_transitions,
-                    'is_final_state': len(possible_transitions) == 0,
-                    'shipment_status': item.get('shipment_status'),
-                    'tracking_link': item.get('parcel_tracking_link')
-                })
-        else:
-            logger.error(f"Errore recupero items: HTTP {response.status_code}")
-        
-        # Costruisci risposta dettagliata
-        return jsonify({
-            'success': True,
-            'order_id': order_id,
-            'order_state': order.get('state', 'UNKNOWN'),
-            'created_at': order.get('created_at'),
-            'customer': {
-                'name': f"{order.get('customer', {}).get('first_name', '')} {order.get('customer', {}).get('last_name', '')}".strip(),
-                'email': order.get('customer', {}).get('email')
-            },
-            'items_count': len(items_info),
-            'items': items_info,
-            'can_accept': can_accept_any,
-            'acceptance_summary': {
-                'acceptable': sum(1 for i in items_info if i['can_accept']),
-                'already_accepted': sum(1 for i in items_info if i['state'] == 'ACCEPTED'),
-                'final_state': sum(1 for i in items_info if i['is_final_state']),
-                'total': len(items_info)
-            },
-            'recommendation': _get_order_recommendation(items_info, can_accept_any)
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"❌ Errore debug endpoint: {e}")
-        logger.exception(e)
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-
-def _get_order_recommendation(items_info: list, can_accept_any: bool) -> str:
-    """Genera raccomandazione in base allo stato degli items"""
-    if not items_info:
-        return "⚠️ Nessun item trovato"
-    
-    if can_accept_any:
-        acceptable = sum(1 for i in items_info if i['can_accept'])
-        return f"✅ Puoi accettare questo ordine ({acceptable} items accettabili)"
-    
-    all_accepted = all(i['state'] == 'ACCEPTED' for i in items_info)
-    if all_accepted:
-        return "ℹ️ Ordine già completamente accettato. Puoi procedere alla spedizione."
-    
-    all_shipped = all(i['state'] == 'SHIPPED' for i in items_info)
-    if all_shipped:
-        return "📦 Ordine già spedito completamente."
-    
-    final_states = [i for i in items_info if i['is_final_state']]
-    if final_states:
-        states = ", ".join(set(i['state'] for i in final_states))
-        return f"❌ Impossibile accettare: alcuni items sono in stati finali ({states})"
-    
-    return "⚠️ Verifica manualmente lo stato degli items"
-
-
-@app.route('/api/test/refurbed/accept/<order_id>', methods=['POST'])
-def test_accept_refurbed(order_id):
-    """
-    Endpoint test per accettazione Refurbed con log dettagliati
-    Utile per debugging senza passare dal frontend
-    """
-    try:
-        logger.info(f"\n{'='*60}")
-        logger.info(f"🧪 TEST: Accettazione ordine Refurbed {order_id}")
-        logger.info(f"{'='*60}\n")
-        
-        success, message = rf_client.accept_order(order_id)
-        
-        response_data = {
-            'success': success,
-            'message': message,
-            'order_id': order_id,
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        if success:
-            logger.info(f"✅ Test completato con successo")
-            return jsonify(response_data), 200
-        else:
-            logger.error(f"❌ Test fallito: {message}")
-            return jsonify(response_data), 500
-        
-    except Exception as e:
-        logger.error(f"❌ Errore test accept: {e}")
-        logger.exception(e)
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'order_id': order_id
-        }), 500
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)

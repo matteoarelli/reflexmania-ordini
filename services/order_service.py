@@ -58,7 +58,11 @@ def normalize_order(order: Dict, source: str) -> Dict:
         
         order_items = order.get('items', [])
         
-        for item in order_items:
+        # 🆕 LOG DEBUG PER REFURBED
+        logger.info(f"[NORMALIZE-REFURBED] Order ID: {order.get('id')}")
+        logger.info(f"[NORMALIZE-REFURBED] Items ricevuti dall'API: {len(order_items)}")
+        
+        for idx, item in enumerate(order_items):
             item_name = (
                 item.get('name') or 
                 item.get('title') or 
@@ -74,12 +78,16 @@ def normalize_order(order: Dict, source: str) -> Dict:
             
             price = float(item.get('settlement_total_paid', 0))
             
+            logger.info(f"[NORMALIZE-REFURBED]   Item #{idx+1}: SKU={sku}, Name={item_name}, Price={price}")
+            
             items.append({
                 'sku': sku,
                 'name': item_name,
                 'quantity': int(item.get('quantity', 1)),
                 'price': price
             })
+        
+        logger.info(f"[NORMALIZE-REFURBED] Items normalizzati: {len(items)}")
         
         order_date = (
             order.get('released_at') or 
@@ -286,7 +294,7 @@ def disable_product_on_channels(
         results['cdiscount']['message'] = f'❌ Errore: {str(e)}'
         logger.error(f"Errore disabilitazione CDiscount: {e}")
     
-    # Magento (NUOVO!)
+    # Magento
     if magento_client:
         try:
             results['magento']['attempted'] = True

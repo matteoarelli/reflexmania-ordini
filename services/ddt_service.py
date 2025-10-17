@@ -5,6 +5,7 @@ Service per creazione DDT usando API InvoiceX
 from clients.invoicex_api import InvoiceXAPIClient
 from typing import Dict, List, Optional
 import logging
+import json
 
 
 # Mappatura metodi pagamento Magento -> InvoiceX
@@ -129,19 +130,38 @@ class DDTService:
             if not prodotti:
                 return {'success': False, 'error': 'Nessun prodotto nell\'ordine'}
             
+            # 🆕 LOG DETTAGLIATO DEGLI ITEMS
+            self.logger.info(f"\n{'='*80}")
+            self.logger.info(f"[DDT-DEBUG] INIZIO MOVIMENTAZIONE PRODOTTI")
+            self.logger.info(f"[DDT-DEBUG] Ordine ID: {ordine.get('order_id')}")
+            self.logger.info(f"[DDT-DEBUG] Marketplace: {marketplace}")
+            self.logger.info(f"[DDT-DEBUG] Numero items nell'ordine: {len(prodotti)}")
+            self.logger.info(f"[DDT-DEBUG] Items completi:")
+            for idx, p in enumerate(prodotti):
+                self.logger.info(f"[DDT-DEBUG]   Item #{idx+1}: {json.dumps(p, indent=4, default=str)}")
+            self.logger.info(f"{'='*80}\n")
+            
             prodotti_ok = []
             prodotti_errore = []
             
             riga = 2
             
-            for prodotto in prodotti:
+            # 🆕 CONTATORE CHIAMATE API
+            chiamate_api = 0
+            
+            for idx, prodotto in enumerate(prodotti):
                 seriale = prodotto.get('sku', '')
                 prezzo = float(prodotto.get('price', 0))
                 
                 if prezzo == 0:
                     prezzo = float(prodotto.get('unit_price', 0))
                 
-                self.logger.info(f"Prodotto riga {riga}: sku={seriale}, prezzo={prezzo}")
+                self.logger.info(f"\n{'='*60}")
+                self.logger.info(f"[DDT-LOOP] Iterazione #{idx+1} di {len(prodotti)}")
+                self.logger.info(f"[DDT-LOOP] SKU: {seriale}")
+                self.logger.info(f"[DDT-LOOP] Prezzo: {prezzo}")
+                self.logger.info(f"[DDT-LOOP] Riga DDT: {riga}")
+                self.logger.info(f"{'='*60}")
                 
                 if not seriale:
                     prodotti_errore.append(f"Riga {riga} - seriale mancante")
@@ -151,12 +171,30 @@ class DDTService:
                 if prezzo == 0:
                     self.logger.warning(f"Prezzo 0 per prodotto {seriale}")
                 
+                # 🆕 LOG PRIMA DELLA CHIAMATA API
+                self.logger.info(f"[DDT-API] ⏳ STO PER CHIAMARE movimenta_prodotto_ddt()")
+                self.logger.info(f"[DDT-API]    DDT ID: {id_ddt}")
+                self.logger.info(f"[DDT-API]    Seriale: {seriale}")
+                self.logger.info(f"[DDT-API]    Prezzo: {prezzo}")
+                self.logger.info(f"[DDT-API]    Riga: {riga}")
+                
+                chiamate_api += 1
+                
                 if self.api.movimenta_prodotto_ddt(id_ddt, seriale, prezzo, riga):
                     prodotti_ok.append(seriale)
+                    self.logger.info(f"[DDT-API] ✅ Chiamata #{chiamate_api} SUCCESSO")
                 else:
                     prodotti_errore.append(seriale)
+                    self.logger.error(f"[DDT-API] ❌ Chiamata #{chiamate_api} FALLITA")
                 
                 riga += 1
+            
+            self.logger.info(f"\n{'='*80}")
+            self.logger.info(f"[DDT-DEBUG] FINE MOVIMENTAZIONE PRODOTTI")
+            self.logger.info(f"[DDT-DEBUG] Totale chiamate API effettuate: {chiamate_api}")
+            self.logger.info(f"[DDT-DEBUG] Prodotti OK: {len(prodotti_ok)}")
+            self.logger.info(f"[DDT-DEBUG] Prodotti ERRORE: {len(prodotti_errore)}")
+            self.logger.info(f"{'='*80}\n")
             
             return {
                 'success': True,

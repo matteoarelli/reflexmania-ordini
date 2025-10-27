@@ -88,78 +88,63 @@ class BackMarketClient:
     
     def disable_listing(self, listing_id: str) -> bool:
         """
-        Disabilita un listing su BackMarket
-        Prova prima DELETE, poi PUT con stock=0 come fallback
+        Disabilita un listing su BackMarket impostando quantity a 0
+        
+        Secondo la documentazione ufficiale BackMarket:
+        "To put a Listing offline, just set its quantity to 0."
+        
+        Metodo: POST /ws/listings/{listingId}
+        Body: {"quantity": 0}
+        
+        Args:
+            listing_id: ID del listing da disabilitare
+            
+        Returns:
+            True se successo, False altrimenti
         """
         try:
-            # 🆕 LOG INIZIALE DETTAGLIATO
             logger.info(f"\n{'='*60}")
-            logger.info(f"[BACKMARKET-DISABLE] Inizio disabilitazione")
-            logger.info(f"[BACKMARKET-DISABLE] Listing ID ricevuto: '{listing_id}'")
-            logger.info(f"[BACKMARKET-DISABLE] Tipo: {type(listing_id)}")
-            logger.info(f"[BACKMARKET-DISABLE] Lunghezza: {len(listing_id) if listing_id else 0}")
+            logger.info(f"[BACKMARKET-DISABLE] Disabilitazione listing")
+            logger.info(f"[BACKMARKET-DISABLE] Listing ID: '{listing_id}'")
             logger.info(f"{'='*60}")
             
-            # Verifica se listing_id è vuoto
+            # Verifica listing_id valido
             if not listing_id or listing_id.strip() == '':
                 logger.error(f"[BACKMARKET-DISABLE] ❌ Listing ID vuoto o mancante!")
-                logger.error(f"[BACKMARKET-DISABLE] BackMarket richiede un listing_id valido per disabilitare")
                 return False
             
             url = f"{self.base_url}/ws/listings/{listing_id}"
-            logger.info(f"[BACKMARKET-DISABLE] URL costruito: {url}")
             
-            # TENTATIVO 1: DELETE (metodo preferito da BackMarket)
-            logger.info(f"[BACKMARKET-DISABLE] 🔄 Tentativo 1: DELETE")
-            try:
-                response = requests.delete(url, headers=self.headers, timeout=10)
-                
-                logger.info(f"[BACKMARKET-DISABLE] Response DELETE:")
-                logger.info(f"[BACKMARKET-DISABLE]   Status Code: {response.status_code}")
-                logger.info(f"[BACKMARKET-DISABLE]   Response Body: {response.text[:300]}")
-                
-                if response.status_code in [200, 204]:
-                    logger.info(f"✅ Listing BackMarket {listing_id} disabilitato con successo (DELETE)")
-                    return True
-                elif response.status_code == 404:
-                    logger.warning(f"⚠️ Listing BackMarket {listing_id} non trovato (404) - potrebbe essere già disabilitato")
-                    return True
-                
-            except requests.exceptions.Timeout:
-                logger.error(f"[BACKMARKET-DISABLE] ⏱️ Timeout su DELETE dopo 10 secondi")
-            except requests.exceptions.RequestException as e:
-                logger.error(f"[BACKMARKET-DISABLE] ❌ Errore DELETE: {e}")
+            # METODO CORRETTO secondo documentazione: POST con quantity=0
+            data = {"quantity": 0}
             
-            # TENTATIVO 2: PUT con stock=0 (fallback)
-            logger.info(f"[BACKMARKET-DISABLE] 🔄 DELETE fallito, Tentativo 2: PUT stock=0")
-            data = {'stock': 0}
-            logger.info(f"[BACKMARKET-DISABLE] Payload PUT: {data}")
+            logger.info(f"[BACKMARKET-DISABLE] URL: {url}")
+            logger.info(f"[BACKMARKET-DISABLE] Metodo: POST")
+            logger.info(f"[BACKMARKET-DISABLE] Payload: {data}")
             
-            try:
-                response = requests.put(url, headers=self.headers, json=data, timeout=10)
-                
-                logger.info(f"[BACKMARKET-DISABLE] Response PUT:")
-                logger.info(f"[BACKMARKET-DISABLE]   Status Code: {response.status_code}")
-                logger.info(f"[BACKMARKET-DISABLE]   Response Body: {response.text[:300]}")
-                
-                if response.status_code in [200, 204]:
-                    logger.info(f"✅ Listing BackMarket {listing_id} disabilitato con successo (PUT stock=0)")
-                    return True
-                elif response.status_code == 404:
-                    logger.warning(f"⚠️ Listing BackMarket {listing_id} non trovato (404)")
-                    return True
-                else:
-                    logger.error(f"❌ BackMarket PUT fallito - Status: {response.status_code}")
-                    logger.error(f"❌ Response: {response.text[:300]}")
-                    return False
-                    
-            except requests.exceptions.Timeout:
-                logger.error(f"[BACKMARKET-DISABLE] ⏱️ Timeout su PUT dopo 10 secondi")
+            response = requests.post(url, headers=self.headers, json=data, timeout=10)
+            
+            logger.info(f"[BACKMARKET-DISABLE] Response Status: {response.status_code}")
+            logger.info(f"[BACKMARKET-DISABLE] Response Body: {response.text[:300]}")
+            
+            if response.status_code in [200, 204]:
+                logger.info(f"✅ Listing BackMarket {listing_id} disabilitato con successo (quantity=0)")
+                return True
+            elif response.status_code == 404:
+                logger.warning(f"⚠️ Listing BackMarket {listing_id} non trovato (404) - già disabilitato o non esistente")
+                return True  # Consideriamo successo se già non esiste
+            else:
+                logger.error(f"❌ BackMarket disabilitazione fallita")
+                logger.error(f"❌ Status Code: {response.status_code}")
+                logger.error(f"❌ Response: {response.text[:300]}")
                 return False
-            except requests.exceptions.RequestException as e:
-                logger.error(f"[BACKMARKET-DISABLE] ❌ Errore PUT: {e}")
-                return False
-            
+        
+        except requests.exceptions.Timeout:
+            logger.error(f"[BACKMARKET-DISABLE] ⏱️ Timeout dopo 10 secondi")
+            return False
+        except requests.exceptions.RequestException as e:
+            logger.error(f"[BACKMARKET-DISABLE] ❌ Errore richiesta HTTP: {e}")
+            return False
         except Exception as e:
             logger.error(f"[BACKMARKET-DISABLE] ❌ Errore generico imprevisto: {e}")
             logger.exception(e)

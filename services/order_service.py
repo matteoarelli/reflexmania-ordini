@@ -14,16 +14,31 @@ def normalize_order(order: Dict, source: str) -> Dict:
     if source == 'backmarket':
         shipping = order.get('shipping_address', {})
         items = []
-        
-        for item in order.get('orderlines', []):
+    
+        # 🆕 LOG DEBUG per verificare struttura orderlines
+        logger.info(f"[NORMALIZE-BACKMARKET] Order ID: {order.get('order_id')}")
+        logger.info(f"[NORMALIZE-BACKMARKET] Orderlines ricevute: {len(order.get('orderlines', []))}")
+    
+        for idx, item in enumerate(order.get('orderlines', [])):
             sku = item.get('serial_number') or item.get('listing', '')
+            
+            # FIX: Usa 'listing_id' (numerico) invece di 'listing' (SKU)
+            listing_id_numeric = item.get('listing_id', '')
+            
+            logger.info(f"[NORMALIZE-BACKMARKET]   Item #{idx+1}:")
+            logger.info(f"[NORMALIZE-BACKMARKET]     SKU (listing): {item.get('listing')}")
+            logger.info(f"[NORMALIZE-BACKMARKET]     Serial: {item.get('serial_number')}")
+            logger.info(f"[NORMALIZE-BACKMARKET]     Listing ID (numerico): {listing_id_numeric}")
+            
             items.append({
                 'sku': sku,
-                'listing_id': item.get('listing', ''),
+                'listing_id': str(listing_id_numeric) if listing_id_numeric else '',
                 'name': item.get('product', 'N/A'),
                 'quantity': item.get('quantity', 1),
                 'price': float(item.get('price', 0))
             })
+    
+        logger.info(f"[NORMALIZE-BACKMARKET] Items normalizzati: {len(items)}")
         
         customer_email = (
             order.get('customer_email') or 

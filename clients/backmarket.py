@@ -4,7 +4,7 @@ Client BackMarket API
 """
 import requests
 import logging
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -86,13 +86,105 @@ class BackMarketClient:
             logger.error(f"Errore imprevisto: {e}")
             return False
     
+    def find_listing_by_sku(self, sku: str) -> Optional[Dict]:
+        """
+        Cerca un listing tramite SKU recuperando tutti i listing attivi
+        
+        BackMarket non supporta ricerca diretta per SKU, quindi dobbiamo:
+        1. Recuperare tutti i listing (paginati)
+        2. Cercare quello con SKU corrispondente
+        
+        Args:
+            sku: SKU da cercare
+            
+        Returns:
+            Dict con dati del listing o None se non trovato
+        """
+        try:
+            logger.info(f"[BACKMARKET-SEARCH] 🔍 Ricerca listing con SKU '{sku}'")
+            logger.info(f"[BACKMARKET-SEARCH] Recupero listing attivi...")
+            
+            url = f"{self.base_url}/ws/listings"
+            cursor = None
+            max_pages = 20  # Limite per sicurezza (20 pagine * 100 = 2000 listing max)
+            total_checked = 0
+            
+            for page in range(max_pages):
+                params = {'limit': 100}
+                if cursor:
+                    params['cursor'] = cursor
+                
+                logger.info(f"[BACKMARKET-SEARCH] Pagina {page + 1}/{max_pages}")
+                
+                try:
+                    response = requests.get(url, headers=self.headers, params=params, timeout=10)
+                    
+                    if response.status_code != 200:
+                        logger.error(f"[BACKMARKET-SEARCH] Errore HTTP {response.status_code}")
+                        logger.error(f"[BACKMARKET-SEARCH] Response: {response.text[:200]}")
+                        break
+                    
+                    data = response.json()
+                    results = data.get('results', [])
+                    total_checked += len(results)
+                    
+                    logger.info(f"[BACKMARKET-SEARCH] Trovati {len(results)} listing in questa pagina")
+                    logger.info(f"[BACKMARKET-SEARCH] Totale listing controllati finora: {total_checked}")
+                    
+                    # Cerca in questa pagina
+                    for listing in results:
+                        listing_sku = listing.get('sku', '')
+                        
+                        if listing_sku == sku:
+                            listing_id = listing.get('id') or listing.get('listing_id')
+                            logger.info(f"[BACKMARKET-SEARCH] ✅ LISTING TROVATO!")
+                            logger.info(f"[BACKMARKET-SEARCH]   Listing ID: {listing_id}")
+                            logger.info(f"[BACKMARKET-SEARCH]   SKU: {listing_sku}")
+                            logger.info(f"[BACKMARKET-SEARCH]   Title: {listing.get('title', '')[:60]}")
+                            logger.info(f"[BACKMARKET-SEARCH]   Quantity: {listing.get('quantity')}")
+                            logger.info(f"[BACKMARKET-SEARCH]   Price: {listing.get('price')}")
+                            logger.info(f"[BACKMARKET-SEARCH]   Grade: {listing.get('grade')}")
+                            return listing
+                    
+                    # Controlla se ci sono altre pagine
+                    next_url = data.get('next')
+                    
+                    if not next_url:
+                        logger.info(f"[BACKMARKET-SEARCH] Nessuna pagina successiva, fine ricerca")
+                        break
+                    
+                    # Estrai il cursor dal next URL
+                    if 'cursor=' in next_url:
+                        cursor = next_url.split('cursor=')[1].split('&')[0]
+                        logger.info(f"[BACKMARKET-SEARCH] Cursor per pagina successiva: {cursor[:20]}...")
+                    else:
+                        logger.warning(f"[BACKMARKET-SEARCH] Next URL senza cursor: {next_url}")
+                        break
+                    
+                except requests.exceptions.Timeout:
+                    logger.error(f"[BACKMARKET-SEARCH] Timeout su pagina {page + 1}")
+                    break
+                except Exception as e:
+                    logger.error(f"[BACKMARKET-SEARCH] Errore su pagina {page + 1}: {e}")
+                    break
+            
+            logger.warning(f"[BACKMARKET-SEARCH] ⚠️ SKU '{sku}' NON trovato")
+            logger.warning(f"[BACKMARKET-SEARCH] Totale listing controllati: {total_checked}")
+            logger.warning(f"[BACKMARKET-SEARCH] Il prodotto potrebbe non essere su BackMarket o essere già disabilitato")
+            return None
+            
+        except Exception as e:
+            logger.error(f"[BACKMARKET-SEARCH] ❌ Errore generico ricerca: {e}")
+            logger.exception(e)
+            return None
+    
     def disable_listing(self, listing_id: str) -> bool:
         """
         Disabilita un listing su BackMarket impostando quantity a 0
         
-        Strategia a 3 step:
-        1. Prova disabilitazione diretta con POST
-        2. Se riceve 404 o 400 "Listing ID must be...", prova GET diretta
+        Strategia:
+        1. Prova disabilitazione diretta con POST (se è già un listing_id numerico/UUID)
+        2. Se fallisce (404/400), cerca il listing tramite SKU con ricerca paginata
         3. Riprova disabilitazione con il listing_id corretto trovato
         
         Args:
@@ -126,74 +218,32 @@ class BackMarketClient:
                 logger.error(f"❌ Disabilitazione fallita con errore critico, interrompo")
                 return False
             
-            # STEP 2: Listing non trovato o SKU non valido, prova GET diretta
-            logger.info(f"[BACKMARKET-DISABLE] STEP 2: Listing non trovato o SKU non valido come listing_id")
-            logger.info(f"[BACKMARKET-DISABLE] 🔍 Provo GET diretta su /ws/listings/{listing_id}")
+            # STEP 2: Cerca il listing tramite SKU con ricerca paginata
+            logger.info(f"[BACKMARKET-DISABLE] STEP 2: Listing non trovato o SKU non valido")
+            logger.info(f"[BACKMARKET-DISABLE] 🔍 Cerco listing con SKU '{listing_id}' tra tutti i listing attivi...")
             
-            try:
-                # Prova GET diretta - BackMarket potrebbe accettare SKU nel path per GET
-                get_url = f"{self.base_url}/ws/listings/{listing_id}"
+            listing_data = self.find_listing_by_sku(listing_id)
+            
+            if listing_data:
+                actual_listing_id = listing_data.get('id') or listing_data.get('listing_id')
                 
-                logger.info(f"[BACKMARKET-DISABLE] GET {get_url}")
-                
-                get_response = requests.get(
-                    get_url, 
-                    headers=self.headers, 
-                    timeout=10
-                )
-                
-                logger.info(f"[BACKMARKET-DISABLE] GET Status: {get_response.status_code}")
-                logger.info(f"[BACKMARKET-DISABLE] GET Response: {get_response.text[:500]}")
-                
-                if get_response.status_code == 200:
-                    listing_data = get_response.json()
+                if actual_listing_id:
+                    # STEP 3: Riprova disabilitazione con listing_id corretto
+                    logger.info(f"[BACKMARKET-DISABLE] STEP 3: Riprovo con listing_id {actual_listing_id}")
+                    success, _ = self._try_disable_listing(str(actual_listing_id))
                     
-                    # Estrai il listing_id dalla risposta
-                    actual_listing_id = (
-                        listing_data.get('id') or 
-                        listing_data.get('listing_id')
-                    )
-                    
-                    if actual_listing_id:
-                        logger.info(f"[BACKMARKET-DISABLE] ✅ Listing trovato tramite GET diretta!")
-                        logger.info(f"[BACKMARKET-DISABLE]    Listing ID: {actual_listing_id}")
-                        logger.info(f"[BACKMARKET-DISABLE]    SKU: {listing_data.get('sku')}")
-                        logger.info(f"[BACKMARKET-DISABLE]    Titolo: {listing_data.get('title', '')[:60]}")
-                        logger.info(f"[BACKMARKET-DISABLE]    Quantity attuale: {listing_data.get('quantity')}")
-                        
-                        # STEP 3: Riprova disabilitazione con listing_id corretto
-                        logger.info(f"[BACKMARKET-DISABLE] STEP 3: Riprovo con listing_id {actual_listing_id}")
-                        success, _ = self._try_disable_listing(str(actual_listing_id))
-                        
-                        if success:
-                            logger.info(f"✅ Listing BackMarket {actual_listing_id} (SKU: {listing_id}) disabilitato con successo")
-                            return True
-                        else:
-                            logger.error(f"❌ Disabilitazione fallita anche con listing_id corretto")
-                            return False
+                    if success:
+                        logger.info(f"✅ Listing BackMarket {actual_listing_id} (SKU: {listing_id}) disabilitato con successo")
+                        return True
                     else:
-                        logger.warning(f"⚠️ GET riuscita ma listing_id non trovato nella risposta")
-                        return True  # Non blocchiamo
-                
-                elif get_response.status_code == 404:
-                    logger.warning(f"⚠️ GET diretta restituisce 404 - listing non trovato")
-                    logger.warning(f"⚠️ Il prodotto potrebbe non essere su BackMarket o già disabilitato")
-                    return True  # Non blocchiamo il flusso
-                
-                elif get_response.status_code == 400:
-                    logger.warning(f"⚠️ GET diretta restituisce 400 - SKU non valido anche per GET")
-                    logger.warning(f"⚠️ Il prodotto potrebbe non essere su BackMarket")
-                    return True  # Non blocchiamo il flusso
-                
+                        logger.error(f"❌ Disabilitazione fallita anche con listing_id corretto")
+                        return False
                 else:
-                    logger.warning(f"⚠️ GET fallita con status {get_response.status_code}")
-                    return True  # Non blocchiamo il flusso
-                    
-            except requests.exceptions.Timeout:
-                logger.error(f"[BACKMARKET-DISABLE] ⏱️ Timeout durante GET diretta")
-                return True  # Non blocchiamo il flusso
-            except Exception as e:
-                logger.error(f"[BACKMARKET-DISABLE] ❌ Errore durante GET diretta: {e}")
+                    logger.warning(f"⚠️ Listing trovato ma senza ID valido")
+                    return True
+            else:
+                logger.warning(f"⚠️ Listing con SKU '{listing_id}' non trovato su BackMarket")
+                logger.warning(f"⚠️ Il prodotto potrebbe non essere presente o già disabilitato")
                 return True  # Non blocchiamo il flusso
         
         except Exception as e:
@@ -211,7 +261,7 @@ class BackMarketClient:
         Returns:
             Tupla (success, needs_search):
             - success: True se disabilitato con successo
-            - needs_search: True se ha ricevuto 404/400 e dovrebbe fare ulteriori tentativi
+            - needs_search: True se ha ricevuto 404/400 e dovrebbe cercare tramite SKU
         """
         try:
             url = f"{self.base_url}/ws/listings/{listing_id}"
@@ -226,17 +276,16 @@ class BackMarketClient:
             logger.info(f"[BACKMARKET-DISABLE]   Response: {response.text[:200]}")
             
             if response.status_code in [200, 204]:
-                return (True, False)  # Success, no need to search
+                return (True, False)  # Success
             elif response.status_code == 404:
                 logger.info(f"[BACKMARKET-DISABLE]   Listing non trovato (404)")
-                return (False, True)  # Failed, needs search
+                return (False, True)  # Needs search
             elif response.status_code == 400 and "Listing ID must be" in response.text:
-                # SKU alfanumerico non valido come listing_id, prova GET per recuperare l'ID
                 logger.info(f"[BACKMARKET-DISABLE]   SKU non valido come listing_id (400)")
-                return (False, True)  # Failed, needs search
+                return (False, True)  # Needs search
             else:
                 logger.error(f"[BACKMARKET-DISABLE]   Errore HTTP {response.status_code}")
-                return (False, False)  # Other error, don't search
+                return (False, False)  # Other error
         
         except requests.exceptions.Timeout:
             logger.error(f"[BACKMARKET-DISABLE]   ⏱️ Timeout")

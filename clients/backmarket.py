@@ -90,63 +90,126 @@ class BackMarketClient:
         """
         Disabilita un listing su BackMarket impostando quantity a 0
         
-        Secondo la documentazione ufficiale BackMarket:
-        "To put a Listing offline, just set its quantity to 0."
-        
-        Metodo: POST /ws/listings/{listingId}
-        Body: {"quantity": 0}
+        Gestisce due scenari:
+        1. Se listing_id è numerico (>= 6 cifre) → usa direttamente
+        2. Se listing_id è uno SKU → cerca prima il listing_id tramite API
         
         Args:
-            listing_id: ID del listing da disabilitare
+            listing_id: Può essere sia SKU che listing_id numerico
             
         Returns:
-            True se successo, False altrimenti
+            True se successo o listing non trovato, False se errore critico
         """
         try:
             logger.info(f"\n{'='*60}")
-            logger.info(f"[BACKMARKET-DISABLE] Disabilitazione listing")
-            logger.info(f"[BACKMARKET-DISABLE] Listing ID: '{listing_id}'")
-            logger.info(f"{'='*60}")
+            logger.info(f"[BACKMARKET-DISABLE] 🔧 Disabilitazione listing BackMarket")
+            logger.info(f"[BACKMARKET-DISABLE] Input ricevuto: '{listing_id}'")
+            logger.info(f"[BACKMARKET-DISABLE] Tipo: {type(listing_id)}")
             
-            # Verifica listing_id valido
             if not listing_id or listing_id.strip() == '':
-                logger.error(f"[BACKMARKET-DISABLE] ❌ Listing ID vuoto o mancante!")
+                logger.error(f"[BACKMARKET-DISABLE] ❌ Input vuoto!")
                 return False
             
-            url = f"{self.base_url}/ws/listings/{listing_id}"
+            listing_id = listing_id.strip()
+            actual_listing_id = listing_id
             
-            # METODO CORRETTO secondo documentazione: POST con quantity=0
+            # STEP 1: Determina se è uno SKU o un listing_id
+            # Euristica: se non è numerico puro o ha meno di 6 cifre, è probabilmente uno SKU
+            is_likely_sku = not listing_id.isdigit() or len(listing_id) < 6
+            
+            logger.info(f"[BACKMARKET-DISABLE] È probabilmente uno SKU: {is_likely_sku}")
+            
+            if is_likely_sku:
+                # Cerca il listing tramite SKU
+                logger.info(f"[BACKMARKET-DISABLE] 🔍 Ricerca listing con SKU '{listing_id}'...")
+                
+                try:
+                    search_url = f"{self.base_url}/ws/listings"
+                    params = {'sku': listing_id}
+                    
+                    logger.info(f"[BACKMARKET-DISABLE] URL ricerca: {search_url}")
+                    logger.info(f"[BACKMARKET-DISABLE] Params: {params}")
+                    
+                    search_response = requests.get(
+                        search_url, 
+                        headers=self.headers, 
+                        params=params, 
+                        timeout=10
+                    )
+                    
+                    logger.info(f"[BACKMARKET-DISABLE] Response ricerca: {search_response.status_code}")
+                    
+                    if search_response.status_code == 200:
+                        listings = search_response.json()
+                        logger.info(f"[BACKMARKET-DISABLE] Listings trovati: {len(listings) if isinstance(listings, list) else 'N/A'}")
+                        
+                        if isinstance(listings, list) and len(listings) > 0:
+                            # Cerca il listing_id nella risposta
+                            first_listing = listings[0]
+                            actual_listing_id = (
+                                first_listing.get('id') or 
+                                first_listing.get('listing_id') or
+                                listing_id
+                            )
+                            
+                            logger.info(f"[BACKMARKET-DISABLE] ✅ Listing trovato!")
+                            logger.info(f"[BACKMARKET-DISABLE] Listing ID estratto: {actual_listing_id}")
+                            logger.info(f"[BACKMARKET-DISABLE] SKU: {first_listing.get('sku')}")
+                            logger.info(f"[BACKMARKET-DISABLE] Titolo: {first_listing.get('title', '')[:50]}")
+                        else:
+                            logger.warning(f"[BACKMARKET-DISABLE] ⚠️ Nessun listing trovato con SKU '{listing_id}'")
+                            logger.warning(f"[BACKMARKET-DISABLE] Il prodotto potrebbe non essere su BackMarket o già disabilitato")
+                            return True  # Non blocchiamo il flusso
+                    else:
+                        logger.warning(f"[BACKMARKET-DISABLE] ⚠️ Ricerca fallita: HTTP {search_response.status_code}")
+                        logger.warning(f"[BACKMARKET-DISABLE] Response: {search_response.text[:200]}")
+                        # Proviamo comunque con l'input originale
+                        
+                except requests.exceptions.Timeout:
+                    logger.error(f"[BACKMARKET-DISABLE] ⏱️ Timeout durante ricerca listing")
+                    return True  # Non blocchiamo
+                except Exception as e:
+                    logger.error(f"[BACKMARKET-DISABLE] ❌ Errore durante ricerca: {e}")
+                    # Proviamo comunque con l'input originale
+            
+            # STEP 2: Disabilita il listing
+            logger.info(f"[BACKMARKET-DISABLE] 🎯 Listing ID finale: '{actual_listing_id}'")
+            logger.info(f"{'='*60}")
+            
+            url = f"{self.base_url}/ws/listings/{actual_listing_id}"
             data = {"quantity": 0}
             
-            logger.info(f"[BACKMARKET-DISABLE] URL: {url}")
-            logger.info(f"[BACKMARKET-DISABLE] Metodo: POST")
-            logger.info(f"[BACKMARKET-DISABLE] Payload: {data}")
+            logger.info(f"[BACKMARKET-DISABLE] POST {url}")
+            logger.info(f"[BACKMARKET-DISABLE] Body: {data}")
             
             response = requests.post(url, headers=self.headers, json=data, timeout=10)
             
             logger.info(f"[BACKMARKET-DISABLE] Response Status: {response.status_code}")
-            logger.info(f"[BACKMARKET-DISABLE] Response Body: {response.text[:300]}")
+            logger.info(f"[BACKMARKET-DISABLE] Response: {response.text[:300]}")
             
             if response.status_code in [200, 204]:
-                logger.info(f"✅ Listing BackMarket {listing_id} disabilitato con successo (quantity=0)")
+                logger.info(f"✅ Listing BackMarket disabilitato con successo")
+                logger.info(f"   Listing ID: {actual_listing_id}")
+                if is_likely_sku:
+                    logger.info(f"   SKU originale: {listing_id}")
                 return True
             elif response.status_code == 404:
-                logger.warning(f"⚠️ Listing BackMarket {listing_id} non trovato (404) - già disabilitato o non esistente")
-                return True  # Consideriamo successo se già non esiste
+                logger.warning(f"⚠️ Listing {actual_listing_id} non trovato (404)")
+                logger.warning(f"   Potrebbe essere già disabilitato o non esistere")
+                return True  # Non blocchiamo
             else:
-                logger.error(f"❌ BackMarket disabilitazione fallita")
-                logger.error(f"❌ Status Code: {response.status_code}")
-                logger.error(f"❌ Response: {response.text[:300]}")
+                logger.error(f"❌ Disabilitazione fallita - HTTP {response.status_code}")
+                logger.error(f"   Response: {response.text[:300]}")
                 return False
         
         except requests.exceptions.Timeout:
-            logger.error(f"[BACKMARKET-DISABLE] ⏱️ Timeout dopo 10 secondi")
+            logger.error(f"[BACKMARKET-DISABLE] ⏱️ Timeout durante disabilitazione")
             return False
         except requests.exceptions.RequestException as e:
             logger.error(f"[BACKMARKET-DISABLE] ❌ Errore richiesta HTTP: {e}")
             return False
         except Exception as e:
-            logger.error(f"[BACKMARKET-DISABLE] ❌ Errore generico imprevisto: {e}")
+            logger.error(f"[BACKMARKET-DISABLE] ❌ Errore generico: {e}")
             logger.exception(e)
             return False
     

@@ -92,11 +92,11 @@ class BackMarketClient:
         
         Strategia a 3 step:
         1. Prova disabilitazione diretta con POST
-        2. Se riceve 404, prova GET diretta per recuperare il listing completo
+        2. Se riceve 404 o 400 "Listing ID must be...", prova GET diretta
         3. Riprova disabilitazione con il listing_id corretto trovato
         
         Args:
-            listing_id: Può essere sia listing_id numerico che SKU
+            listing_id: Può essere sia listing_id numerico/UUID che SKU
             
         Returns:
             True se successo o listing non trovato, False se errore critico
@@ -113,7 +113,7 @@ class BackMarketClient:
             
             listing_id = listing_id.strip()
             
-            # STEP 1: Prova disabilitazione diretta (potrebbe essere un listing_id numerico)
+            # STEP 1: Prova disabilitazione diretta
             logger.info(f"[BACKMARKET-DISABLE] STEP 1: Tentativo disabilitazione diretta")
             success, needs_search = self._try_disable_listing(listing_id)
             
@@ -122,16 +122,16 @@ class BackMarketClient:
                 return True
             
             if not needs_search:
-                # Errore diverso da 404 (es: 403, 500), non proviamo la ricerca
-                logger.error(f"❌ Disabilitazione fallita con errore non-404, interrompo")
+                # Errore diverso da 404/400, non proviamo la ricerca
+                logger.error(f"❌ Disabilitazione fallita con errore critico, interrompo")
                 return False
             
-            # STEP 2: Listing non trovato (404), prova GET diretta
-            logger.info(f"[BACKMARKET-DISABLE] STEP 2: Listing non trovato (404)")
+            # STEP 2: Listing non trovato o SKU non valido, prova GET diretta
+            logger.info(f"[BACKMARKET-DISABLE] STEP 2: Listing non trovato o SKU non valido come listing_id")
             logger.info(f"[BACKMARKET-DISABLE] 🔍 Provo GET diretta su /ws/listings/{listing_id}")
             
             try:
-                # Prova GET diretta - BackMarket potrebbe accettare SKU nel path
+                # Prova GET diretta - BackMarket potrebbe accettare SKU nel path per GET
                 get_url = f"{self.base_url}/ws/listings/{listing_id}"
                 
                 logger.info(f"[BACKMARKET-DISABLE] GET {get_url}")
@@ -173,11 +173,16 @@ class BackMarketClient:
                             return False
                     else:
                         logger.warning(f"⚠️ GET riuscita ma listing_id non trovato nella risposta")
-                        return True
+                        return True  # Non blocchiamo
                 
                 elif get_response.status_code == 404:
                     logger.warning(f"⚠️ GET diretta restituisce 404 - listing non trovato")
                     logger.warning(f"⚠️ Il prodotto potrebbe non essere su BackMarket o già disabilitato")
+                    return True  # Non blocchiamo il flusso
+                
+                elif get_response.status_code == 400:
+                    logger.warning(f"⚠️ GET diretta restituisce 400 - SKU non valido anche per GET")
+                    logger.warning(f"⚠️ Il prodotto potrebbe non essere su BackMarket")
                     return True  # Non blocchiamo il flusso
                 
                 else:
@@ -201,12 +206,12 @@ class BackMarketClient:
         Tenta di disabilitare un listing con POST
         
         Args:
-            listing_id: ID del listing da disabilitare
+            listing_id: ID del listing da disabilitare (deve essere numerico o UUID)
             
         Returns:
             Tupla (success, needs_search):
             - success: True se disabilitato con successo
-            - needs_search: True se ha ricevuto 404 e dovrebbe fare ulteriori tentativi
+            - needs_search: True se ha ricevuto 404/400 e dovrebbe fare ulteriori tentativi
         """
         try:
             url = f"{self.base_url}/ws/listings/{listing_id}"
@@ -225,9 +230,13 @@ class BackMarketClient:
             elif response.status_code == 404:
                 logger.info(f"[BACKMARKET-DISABLE]   Listing non trovato (404)")
                 return (False, True)  # Failed, needs search
+            elif response.status_code == 400 and "Listing ID must be" in response.text:
+                # SKU alfanumerico non valido come listing_id, prova GET per recuperare l'ID
+                logger.info(f"[BACKMARKET-DISABLE]   SKU non valido come listing_id (400)")
+                return (False, True)  # Failed, needs search
             else:
                 logger.error(f"[BACKMARKET-DISABLE]   Errore HTTP {response.status_code}")
-                return (False, False)  # Error, don't search
+                return (False, False)  # Other error, don't search
         
         except requests.exceptions.Timeout:
             logger.error(f"[BACKMARKET-DISABLE]   ⏱️ Timeout")

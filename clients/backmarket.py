@@ -90,12 +90,11 @@ class BackMarketClient:
         """
         Disabilita un listing su BackMarket impostando quantity a 0
         
-        Usa l'endpoint POST /ws/listings che supporta update tramite SKU.
-        Questo endpoint richiede pochi campi e può aggiornare un listing esistente
-        fornendo solo SKU + quantity.
+        Usa l'endpoint POST /ws/listings con formato CSV batch.
+        Secondo il supporto BackMarket: "This endpoint has very few required fields, 
+        and you could update a listing with only its SKU and quantity."
         
         Documentazione: https://api.backmarket.dev/#/paths/ws-listings/post
-        Fonte: Raccomandazione diretta dal supporto BackMarket API
         
         Args:
             listing_id: SKU del prodotto da disabilitare
@@ -115,15 +114,20 @@ class BackMarketClient:
             
             sku = listing_id.strip()
             
-            # Usa POST /ws/listings con SKU + quantity
-            # BackMarket aggiorna automaticamente il listing esistente
+            # Crea CSV con header e una riga: sku,quantity
+            # Usa \r\n per line endings come nell'esempio BackMarket
+            csv_content = f"sku,quantity\r\n{sku},0"
+            
             url = f"{self.base_url}/ws/listings"
             data = {
-                "sku": sku,
-                "quantity": 0
+                "catalog": csv_content,
+                "delimiter": ",",
+                "quotechar": "\"",
+                "encoding": "utf-8"
             }
             
             logger.info(f"[BACKMARKET-DISABLE] POST {url}")
+            logger.info(f"[BACKMARKET-DISABLE] CSV Content: {repr(csv_content)}")
             logger.info(f"[BACKMARKET-DISABLE] Body: {data}")
             
             response = requests.post(url, headers=self.headers, json=data, timeout=10)
@@ -131,7 +135,8 @@ class BackMarketClient:
             logger.info(f"[BACKMARKET-DISABLE] Status: {response.status_code}")
             logger.info(f"[BACKMARKET-DISABLE] Response: {response.text[:500]}")
             
-            if response.status_code in [200, 201]:
+            # 200 = success, 201 = created (shouldn't happen), 202 = accepted (async processing)
+            if response.status_code in [200, 201, 202]:
                 logger.info(f"✅ Listing BackMarket con SKU {sku} disabilitato con successo")
                 return True
             elif response.status_code == 404:
@@ -143,13 +148,13 @@ class BackMarketClient:
                 logger.warning(f"⚠️ Errore 400 per SKU {sku}")
                 logger.warning(f"⚠️ Response: {response_text}")
                 
-                # Se è un errore di validazione sul listing, non blocchiamo
-                if any(err in response_text.lower() for err in ['not found', 'non trouvé', 'does not exist']):
-                    logger.warning(f"⚠️ Il listing potrebbe non esistere su BackMarket")
-                    return True
+                # Controlla se è un errore "listing non trovato"
+                if any(err in response_text.lower() for err in ['not found', 'non trouvé', 'does not exist', 'n\'existe pas']):
+                    logger.warning(f"⚠️ Il listing non esiste su BackMarket")
+                    return True  # Non blocchiamo il flusso
                 
-                # Altri errori 400 sono più seri
-                logger.error(f"❌ Errore di validazione BackMarket")
+                # Altri errori 400 sono problemi di formato/validazione
+                logger.error(f"❌ Errore di validazione BackMarket (possibile problema formato CSV)")
                 return False
             else:
                 logger.error(f"❌ Disabilitazione fallita - HTTP {response.status_code}")

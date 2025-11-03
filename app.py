@@ -45,33 +45,30 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 app = Flask(__name__)
 
+# Scheduler globale per automazione
+scheduler = None
+
+# ============================================================================
+# INIZIALIZZAZIONE CLIENTS
+# ============================================================================
+
 # Inizializza clients marketplace
 bm_client = BackMarketClient(BACKMARKET_TOKEN, BACKMARKET_BASE_URL)
 rf_client = RefurbishedClient(REFURBED_TOKEN, REFURBED_BASE_URL)
 oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SELLER_ID)
+logger.info("✅ Clients marketplace inizializzati")
 
 # Inizializza Magento client
 magento_client = MagentoAPIClient(MAGENTO_URL, MAGENTO_TOKEN)
 magento_service = MagentoService(magento_client)
-
-# Automation Service
-automation_service = AutomationService(
-    backmarket_client=backmarket_client,
-    refurbed_client=refurbed_client,
-    magento_service=magento_service,
-    ddt_service=ddt_service,
-    order_service=order_service
-)
-logger.info("✅ AutomationService inizializzato")
+logger.info("✅ MagentoService inizializzato")
 
 # Inizializza InvoiceX API client
 invoicex_api_client = InvoiceXAPIClient(
     base_url=INVOICEX_API_URL,
     api_key=INVOICEX_API_KEY
 )
-
-# Inizializza DDT Service
-ddt_service = DDTService(invoicex_api_client)
+logger.info("✅ InvoiceX client inizializzato")
 
 # Inizializza Anastasia client
 try:
@@ -80,6 +77,35 @@ try:
 except Exception as e:
     logger.error(f"❌ Errore inizializzazione Anastasia: {e}")
     anastasia_client = None
+
+# ============================================================================
+# INIZIALIZZAZIONE SERVICES (ORDINE IMPORTANTE!)
+# ============================================================================
+
+# DDT Service
+ddt_service = DDTService(invoicex_api_client)
+logger.info("✅ DDTService inizializzato")
+
+# Order Service (usa la nuova classe che hai aggiunto)
+from services.order_service import OrderService
+order_service = OrderService(
+    backmarket_client=bm_client,
+    refurbed_client=rf_client,
+    magento_client=magento_client,
+    octopia_client=oct_client,
+    anastasia_client=anastasia_client
+)
+logger.info("✅ OrderService inizializzato")
+
+# Automation Service (DEVE essere l'ULTIMO)
+automation_service = AutomationService(
+    backmarket_client=bm_client,
+    refurbed_client=rf_client,
+    magento_service=magento_service,
+    ddt_service=ddt_service,
+    order_service=order_service
+)
+logger.info("✅ AutomationService inizializzato")
 
 
 # ============================================================================
@@ -1821,13 +1847,12 @@ def health():
             'anastasia': anastasia_status
         }
     })
-
 # ============================================================
-# ROUTES - AUTOMAZIONE
+# ROUTES - AUTOMAZIONE (Flask)
 # ============================================================
 
-@app.post("/api/automation/process-orders")
-async def trigger_automation():
+@app.route('/api/automation/process-orders', methods=['POST'])
+def trigger_automation():
     """
     Triggera manualmente il processo di automazione
     Accetta ordini e crea DDT per tutti gli ordini pendenti
@@ -1836,59 +1861,60 @@ async def trigger_automation():
         logger.info("🚀 Automazione triggerata manualmente via API")
         results = automation_service.process_all_pending_orders()
         
-        return {
+        return jsonify({
             "success": True,
             "results": results,
             "message": f"{results['orders_processed']} ordini processati"
-        }
+        })
     except Exception as e:
         logger.error(f"Errore automazione: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
 
 
-@app.get("/api/automation/status")
-async def automation_status():
+@app.route('/api/automation/status', methods=['GET'])
+def automation_status():
     """Stato dello scheduler di automazione"""
     global scheduler
     
     if not scheduler:
-        return {
+        return jsonify({
             "enabled": False,
             "status": "disabled",
             "message": "Automazione disabilitata"
-        }
+        })
     
     jobs = scheduler.get_jobs()
     automation_job = next((job for job in jobs if job.id == "automation_job"), None)
     
     if automation_job:
-        return {
+        return jsonify({
             "enabled": True,
             "status": "running",
             "next_run": automation_job.next_run_time.isoformat() if automation_job.next_run_time else None,
             "interval_minutes": os.getenv("AUTOMATION_INTERVAL_MINUTES", "15")
-        }
+        })
     else:
-        return {
+        return jsonify({
             "enabled": True,
             "status": "scheduled",
             "message": "Scheduler attivo ma job non trovato"
-        }
+        })
 
 
-@app.get("/api/test-telegram")
-async def test_telegram():
+@app.route('/api/test-telegram', methods=['GET'])
+def test_telegram():
     """Test notifica Telegram"""
-    import requests
-    
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     
     if not token or not chat_id:
-        return {
+        return jsonify({
             "success": False,
             "error": "TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID non configurati"
-        }
+        })
     
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -1899,22 +1925,49 @@ async def test_telegram():
         }, timeout=10)
         
         if response.status_code == 200:
-            return {
+            return jsonify({
                 "success": True,
                 "message": "Notifica Telegram inviata con successo!"
-            }
+            })
         else:
-            return {
+            return jsonify({
                 "success": False,
                 "error": f"Errore Telegram: {response.status_code}",
                 "response": response.text
-            }
+            })
     except Exception as e:
-        return {
+        return jsonify({
             "success": False,
             "error": str(e)
-        }
+        })
+
+# ============================================================
+# STARTUP - AVVIA SCHEDULER AUTOMAZIONE
+# ============================================================
+
+def start_automation_scheduler():
+    """Avvia lo scheduler per l'automazione ordini"""
+    global scheduler
     
+    if os.getenv("ENABLE_AUTOMATION", "true").lower() != "true":
+        logger.info("⏸️ Automazione disabilitata (ENABLE_AUTOMATION=false)")
+        return
+    
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        func=lambda: automation_service.process_all_pending_orders(),
+        trigger="interval",
+        minutes=int(os.getenv("AUTOMATION_INTERVAL_MINUTES", "15")),
+        id="automation_job",
+        name="Automazione ordini",
+        replace_existing=True
+    )
+    scheduler.start()
+    logger.info(f"⏰ Scheduler automazione avviato (ogni {os.getenv('AUTOMATION_INTERVAL_MINUTES', '15')} minuti)")
+
+# Avvia scheduler all'avvio dell'applicazione
+start_automation_scheduler()
+
 # ============================================================================
 # AVVIO APPLICAZIONE
 # ============================================================================

@@ -329,3 +329,81 @@ def disable_product_on_channels(
     logger.info(f"  - Magento: {results['magento']}")
     
     return results
+# ============================================================================
+# CLASSE ORDER SERVICE (wrapper per automazione)
+# ============================================================================
+
+class OrderService:
+    """
+    Servizio per gestione ordini multi-marketplace
+    Wrapper per le funzioni esistenti
+    """
+    
+    def __init__(
+        self, 
+        backmarket_client, 
+        refurbed_client, 
+        magento_client,
+        octopia_client,
+        anastasia_client
+    ):
+        self.bm_client = backmarket_client
+        self.rf_client = refurbed_client
+        self.magento_client = magento_client
+        self.oct_client = octopia_client
+        self.anastasia_client = anastasia_client
+        
+        logger.info("OrderService inizializzato")
+    
+    def get_all_pending_orders(self) -> List[Dict]:
+        """Recupera tutti gli ordini pendenti da tutti i marketplace"""
+        return get_pending_orders(
+            bm_client=self.bm_client,
+            rf_client=self.rf_client,
+            oct_client=self.oct_client
+        )
+    
+    def get_backmarket_pending_orders(self) -> List[Dict]:
+        """Recupera solo ordini BackMarket pendenti"""
+        orders = []
+        seen_order_ids = set()
+        
+        for status in ['waiting_acceptance', 'accepted', 'to_ship']:
+            bm_orders = self.bm_client.get_orders(status=status)
+            for order in bm_orders:
+                order_state = order.get('state', 0)
+                order_id = str(order.get('order_id'))
+                
+                if order_id not in seen_order_ids and order_state != 9:
+                    orders.append(normalize_order(order, 'backmarket'))
+                    seen_order_ids.add(order_id)
+        
+        return orders
+    
+    def get_refurbed_pending_orders(self) -> List[Dict]:
+        """Recupera solo ordini Refurbed pendenti"""
+        rf_orders_all = self.rf_client.get_orders(state=None, limit=100, sort_desc=True)
+        orders = []
+        
+        for order in rf_orders_all:
+            order_state = order.get('state', 'NEW')
+            if order_state not in ['SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED', 'REJECTED']:
+                orders.append(normalize_order(order, 'refurbed'))
+        
+        return orders
+    
+    def get_magento_pending_orders(self) -> List[Dict]:
+        """Recupera ordini Magento pendenti"""
+        # TODO: Implementare se serve
+        return []
+    
+    def disable_product_all_channels(self, sku: str, listing_id: str = '') -> Dict:
+        """Disabilita prodotto su tutti i canali"""
+        return disable_product_on_channels(
+            sku=sku,
+            listing_id=listing_id,
+            bm_client=self.bm_client,
+            rf_client=self.rf_client,
+            oct_client=self.oct_client,
+            magento_client=self.magento_client
+        )

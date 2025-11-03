@@ -33,6 +33,8 @@ from services import (
 )
 from services.ddt_service import DDTService
 from services.magento_service import MagentoService
+from services.automation_service import AutomationService
+from apscheduler.schedulers.background import BackgroundScheduler
 
 # Configurazione logging
 logging.basicConfig(level=logging.INFO)
@@ -51,6 +53,16 @@ oct_client = OctopiaClient(OCTOPIA_CLIENT_ID, OCTOPIA_CLIENT_SECRET, OCTOPIA_SEL
 # Inizializza Magento client
 magento_client = MagentoAPIClient(MAGENTO_URL, MAGENTO_TOKEN)
 magento_service = MagentoService(magento_client)
+
+# Automation Service
+automation_service = AutomationService(
+    backmarket_client=backmarket_client,
+    refurbed_client=refurbed_client,
+    magento_service=magento_service,
+    ddt_service=ddt_service,
+    order_service=order_service
+)
+logger.info("✅ AutomationService inizializzato")
 
 # Inizializza InvoiceX API client
 invoicex_api_client = InvoiceXAPIClient(
@@ -1810,7 +1822,99 @@ def health():
         }
     })
 
+# ============================================================
+# ROUTES - AUTOMAZIONE
+# ============================================================
 
+@app.post("/api/automation/process-orders")
+async def trigger_automation():
+    """
+    Triggera manualmente il processo di automazione
+    Accetta ordini e crea DDT per tutti gli ordini pendenti
+    """
+    try:
+        logger.info("🚀 Automazione triggerata manualmente via API")
+        results = automation_service.process_all_pending_orders()
+        
+        return {
+            "success": True,
+            "results": results,
+            "message": f"{results['orders_processed']} ordini processati"
+        }
+    except Exception as e:
+        logger.error(f"Errore automazione: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/automation/status")
+async def automation_status():
+    """Stato dello scheduler di automazione"""
+    global scheduler
+    
+    if not scheduler:
+        return {
+            "enabled": False,
+            "status": "disabled",
+            "message": "Automazione disabilitata"
+        }
+    
+    jobs = scheduler.get_jobs()
+    automation_job = next((job for job in jobs if job.id == "automation_job"), None)
+    
+    if automation_job:
+        return {
+            "enabled": True,
+            "status": "running",
+            "next_run": automation_job.next_run_time.isoformat() if automation_job.next_run_time else None,
+            "interval_minutes": os.getenv("AUTOMATION_INTERVAL_MINUTES", "15")
+        }
+    else:
+        return {
+            "enabled": True,
+            "status": "scheduled",
+            "message": "Scheduler attivo ma job non trovato"
+        }
+
+
+@app.get("/api/test-telegram")
+async def test_telegram():
+    """Test notifica Telegram"""
+    import requests
+    
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    
+    if not token or not chat_id:
+        return {
+            "success": False,
+            "error": "TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID non configurati"
+        }
+    
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        response = requests.post(url, json={
+            "chat_id": chat_id,
+            "text": "✅ Test notifica da ReflexMania Automation!\n\nSe ricevi questo messaggio, Telegram è configurato correttamente.",
+            "parse_mode": "Markdown"
+        }, timeout=10)
+        
+        if response.status_code == 200:
+            return {
+                "success": True,
+                "message": "Notifica Telegram inviata con successo!"
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"Errore Telegram: {response.status_code}",
+                "response": response.text
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+    
 # ============================================================================
 # AVVIO APPLICAZIONE
 # ============================================================================

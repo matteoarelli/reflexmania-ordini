@@ -175,14 +175,21 @@ class AutomationService:
     def _create_ddt(self, order: Dict) -> str:
         """Crea DDT su InvoiceX"""
         try:
-            ddt_id = self.ddt_service.create_ddt_for_order(
-                order_id=order['order_id'],
-                marketplace=order.get('channel', 'unknown'),
-                customer_email=order['customer_email'],
-                customer_name=order['customer_name'],
-                items=order['items']
+            # Usa il metodo corretto del DDTService
+            result = self.ddt_service.crea_ddt_da_ordine_marketplace(
+                ordine=order,
+                marketplace=order.get('channel', 'unknown')
             )
-            return ddt_id
+            
+            if result.get('success'):
+                ddt_id = result.get('ddt_id')
+                logger.info(f"✅ [AUTOMATION] DDT {ddt_id} creato con successo")
+                return ddt_id
+            else:
+                error_msg = result.get('error', 'Errore sconosciuto')
+                logger.error(f"❌ [AUTOMATION] Errore creazione DDT: {error_msg}")
+                raise Exception(error_msg)
+                
         except Exception as e:
             logger.error(f"❌ [AUTOMATION] Errore creazione DDT: {e}")
             raise

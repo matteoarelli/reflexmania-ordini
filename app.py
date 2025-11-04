@@ -86,14 +86,21 @@ except Exception as e:
 ddt_service = DDTService(invoicex_api_client)
 logger.info("✅ DDTService inizializzato")
 
-# Order Service (usa la nuova classe che hai aggiunto)
+# Order Service (usa la nuova classe)
 from services.order_service import OrderService
+from utils.order_tracker import OrderTracker
+
+# ✅ CREA TRACKER UNA VOLTA SOLA
+order_tracker = OrderTracker()
+logger.info("✅ OrderTracker globale inizializzato")
+
 order_service = OrderService(
     backmarket_client=bm_client,
     refurbed_client=rf_client,
     magento_client=magento_client,
     octopia_client=oct_client,
-    anastasia_client=anastasia_client
+    anastasia_client=anastasia_client,
+    order_tracker=order_tracker  # ✅ PASSA IL TRACKER
 )
 logger.info("✅ OrderService inizializzato")
 
@@ -1945,21 +1952,19 @@ def test_telegram():
 def tracker_status():
     """Mostra contenuto tracker ordini"""
     try:
-        from utils.order_tracker import OrderTracker
-        tracker = OrderTracker()
-        
+        # ✅ USA IL TRACKER DI order_service (stesso istanza)
         return jsonify({
             "success": True,
             "tracker_file": "/tmp/ordini_processati.json",
-            "stats": tracker.get_stats(),
-            "data": tracker.data,
-            "total_orders": tracker._count_orders(tracker.data)
+            "stats": order_service.order_tracker.get_stats(),
+            "data": order_service.order_tracker.data,
+            "total_orders": order_service.order_tracker._count_orders(order_service.order_tracker.data)
         })
     except Exception as e:
         return jsonify({
             "success": False,
             "error": str(e)
-        }), 500    
+        }), 500   
 
 # ============================================================
 # STARTUP - AVVIA SCHEDULER AUTOMAZIONE

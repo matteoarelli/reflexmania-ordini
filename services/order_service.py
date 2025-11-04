@@ -346,7 +346,8 @@ class OrderService:
         refurbed_client, 
         magento_client,
         octopia_client,
-        anastasia_client
+        anastasia_client,
+        order_tracker=None  # ✅ AGGIUNGI PARAMETRO
     ):
         self.bm_client = backmarket_client
         self.rf_client = refurbed_client
@@ -354,9 +355,13 @@ class OrderService:
         self.oct_client = octopia_client
         self.anastasia_client = anastasia_client
         
-        # ✅ AGGIUNGI QUESTO
-        self.order_tracker = OrderTracker()
-
+        # ✅ USA TRACKER PASSATO O CREANE UNO NUOVO
+        if order_tracker:
+            self.order_tracker = order_tracker
+        else:
+            from utils.order_tracker import OrderTracker
+            self.order_tracker = OrderTracker()
+        
         logger.info("OrderService inizializzato")
     
     def get_all_pending_orders(self) -> List[Dict]:

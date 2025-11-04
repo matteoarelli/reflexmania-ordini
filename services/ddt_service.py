@@ -87,9 +87,20 @@ class DDTService:
             Dict con success, ddt_id, codice_cliente, prodotti_ok, prodotti_errore, payment_method
         """
         try:
-            self.logger.info(
-                f"Creazione DDT per ordine {ordine.get('order_id')} da {marketplace}"
-            )
+            order_id = ordine.get('order_id', '')
+            riferimento = f"{marketplace.upper()}-{order_id}"
+            
+            self.logger.info(f"Creazione DDT per ordine {order_id} da {marketplace}")
+            
+            # ✅ NUOVO: CONTROLLO DDT già esistente
+            if self.api.verifica_ddt_esiste(riferimento):
+                self.logger.warning(f"⚠️ DDT con riferimento '{riferimento}' già esistente, skip creazione")
+                return {
+                    'success': False,
+                    'error': f'DDT già esistente per ordine {order_id}',
+                    'skip': True  # Flag speciale per distinguere da errore vero
+                }
+            # ✅ FINE CONTROLLO
             
             self.logger.info(f"Ordine ricevuto: email={ordine.get('customer_email')}, items={len(ordine.get('items', []))}")
             

@@ -84,12 +84,18 @@ class AutomationService:
                         # Crea DDT
                         try:
                             ddt_id = self._create_ddt(order)
-                            results['ddts_created'].append({
-                                'order_id': order_id,
-                                'ddt_id': ddt_id,
-                                'marketplace': channel
-                            })
-                            logger.info(f"📄 [AUTOMATION] DDT {ddt_id} creato per ordine {order_id}")
+                            
+                            # ✅ Non aggiungere a results se è stato skippato
+                            if ddt_id != "SKIP":
+                                results['ddts_created'].append({
+                                    'order_id': order_id,
+                                    'ddt_id': ddt_id,
+                                    'marketplace': channel
+                                })
+                                logger.info(f"📄 [AUTOMATION] DDT {ddt_id} creato per ordine {order_id}")
+                            else:
+                                logger.info(f"ℹ️ [AUTOMATION] DDT già esistente per ordine {order_id}, skippato")
+                                
                         except Exception as e:
                             error_msg = f"DDT fallito per {order_id}: {str(e)}"
                             logger.error(f"❌ [AUTOMATION] {error_msg}")
@@ -180,6 +186,12 @@ class AutomationService:
                 ordine=order,
                 marketplace=order.get('channel', 'unknown')
             )
+            
+            # ✅ Gestisci caso DDT già esistente
+            if result.get('skip'):
+                logger.info(f"ℹ️ [AUTOMATION] DDT già esistente per ordine {order['order_id']}, skip")
+                # Ritorna un ID fittizio per non far fallire il processo
+                return "SKIP"
             
             if result.get('success'):
                 ddt_id = result.get('ddt_id')

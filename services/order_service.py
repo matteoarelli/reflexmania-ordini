@@ -397,9 +397,35 @@ class OrderService:
         return orders
     
     def get_magento_pending_orders(self) -> List[Dict]:
-        """Recupera ordini Magento pendenti"""
-        # TODO: Implementare se serve
-        return []
+        """Recupera ordini Magento in processing SENZA DDT già creato"""
+        orders = []
+        
+        try:
+            # Recupera ordini in processing
+            mg_orders = self.magento_client.get_processing_orders()
+            logger.info(f"Magento: trovati {len(mg_orders)} ordini in processing")
+            
+            for order in mg_orders:
+                order_id = order.get('increment_id', '')
+                
+                if not order_id:
+                    continue
+                
+                # Verifica se esiste già DDT su InvoiceX
+                riferimento = f"MAGENTO-{order_id}"
+                
+                # Qui dovremmo controllare su InvoiceX, ma non abbiamo accesso
+                # al client InvoiceX in OrderService
+                # Soluzione: normalizziamo l'ordine e il controllo lo fa DDTService
+                
+                orders.append(normalize_order(order, 'magento'))
+            
+            logger.info(f"Magento: {len(orders)} ordini da controllare")
+            
+        except Exception as e:
+            logger.error(f"Errore recupero ordini Magento: {e}")
+        
+        return orders
     
     def disable_product_all_channels(self, sku: str, listing_id: str = '') -> Dict:
         """Disabilita prodotto su tutti i canali"""

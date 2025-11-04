@@ -63,48 +63,51 @@ class AutomationService:
             
             logger.info(f"📦 [AUTOMATION] Trovati {len(pending_orders)} ordini da processare")
             
-            # 2. ACCETTA ORDINI
+            # 2. ACCETTA ORDINI E CREA DDT
             for order in pending_orders:
                 try:
-                    logger.info(f"🔄 [AUTOMATION] Processo ordine {order['order_id']} ({order['marketplace']})")
+                    channel = order.get('channel', 'unknown')
+                    order_id = order.get('order_id', 'unknown')
+                    
+                    logger.info(f"🔄 [AUTOMATION] Processo ordine {order_id} ({channel})")
                     
                     # Accetta ordine
                     accepted = self._accept_order(order)
                     
                     if accepted:
                         results['orders_accepted'].append({
-                            'order_id': order['order_id'],
-                            'marketplace': order['marketplace']
+                            'order_id': order_id,
+                            'marketplace': channel
                         })
-                        logger.info(f"✅ [AUTOMATION] Ordine {order['order_id']} accettato")
+                        logger.info(f"✅ [AUTOMATION] Ordine {order_id} accettato")
                         
-                        # 3. CREA DDT
+                        # Crea DDT
                         try:
                             ddt_id = self._create_ddt(order)
                             results['ddts_created'].append({
-                                'order_id': order['order_id'],
+                                'order_id': order_id,
                                 'ddt_id': ddt_id,
-                                'marketplace': order['marketplace']
+                                'marketplace': channel
                             })
-                            logger.info(f"📄 [AUTOMATION] DDT {ddt_id} creato per ordine {order['order_id']}")
+                            logger.info(f"📄 [AUTOMATION] DDT {ddt_id} creato per ordine {order_id}")
                         except Exception as e:
-                            error_msg = f"DDT fallito per {order['order_id']}: {str(e)}"
+                            error_msg = f"DDT fallito per {order_id}: {str(e)}"
                             logger.error(f"❌ [AUTOMATION] {error_msg}")
                             results['errors'].append(error_msg)
                     else:
-                        error_msg = f"Accettazione fallita per {order['order_id']}"
+                        error_msg = f"Accettazione fallita per {order_id}"
                         logger.error(f"❌ [AUTOMATION] {error_msg}")
                         results['errors'].append(error_msg)
                         
                 except Exception as e:
-                    error_msg = f"Errore ordine {order['order_id']}: {str(e)}"
+                    error_msg = f"Errore ordine {order.get('order_id', 'unknown')}: {str(e)}"
                     logger.error(f"❌ [AUTOMATION] {error_msg}")
                     logger.exception(e)
                     results['errors'].append(error_msg)
             
             results['orders_processed'] = len(results['orders_accepted'])
             
-            # 4. NOTIFICA TELEGRAM
+            # 3. NOTIFICA TELEGRAM
             self._send_telegram_notification(results)
             
             logger.info("=" * 60)
@@ -151,7 +154,7 @@ class AutomationService:
     
     def _accept_order(self, order: Dict) -> bool:
         """Accetta un ordine sul marketplace"""
-        marketplace = order['marketplace']
+        marketplace = order.get('channel', 'unknown')
         order_id = order['order_id']
         
         try:
@@ -174,9 +177,9 @@ class AutomationService:
         try:
             ddt_id = self.ddt_service.create_ddt_for_order(
                 order_id=order['order_id'],
-                marketplace=order['marketplace'],
-                customer_email=order['customer']['email'],
-                customer_name=order['customer']['name'],
+                marketplace=order.get('channel', 'unknown'),
+                customer_email=order['customer_email'],
+                customer_name=order['customer_name'],
                 items=order['items']
             )
             return ddt_id

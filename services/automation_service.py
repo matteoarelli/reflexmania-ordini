@@ -93,8 +93,14 @@ class AutomationService:
                                     'marketplace': channel
                                 })
                                 logger.info(f"📄 [AUTOMATION] DDT {ddt_id} creato per ordine {order_id}")
+                                
+                                # ✅ Segna come processato
+                                self.order_service.order_tracker.mark_processed(channel, order_id, ddt_id)
                             else:
                                 logger.info(f"ℹ️ [AUTOMATION] DDT già esistente per ordine {order_id}, skippato")
+                                
+                                # ✅ Segna come processato anche se skippato
+                                self.order_service.order_tracker.mark_processed(channel, order_id, "SKIP")
                                 
                         except Exception as e:
                             error_msg = f"DDT fallito per {order_id}: {str(e)}"

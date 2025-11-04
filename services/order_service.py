@@ -353,6 +353,9 @@ class OrderService:
         self.oct_client = octopia_client
         self.anastasia_client = anastasia_client
         
+        # ✅ AGGIUNGI QUESTO
+        self.order_tracker = OrderTracker()
+
         logger.info("OrderService inizializzato")
     
     def get_all_pending_orders(self) -> List[Dict]:
@@ -369,11 +372,15 @@ class OrderService:
         seen_order_ids = set()
         
         # ✅ SOLO waiting_acceptance (non ancora accettati)
-        for status in ['waiting_acceptance']:  # ✅ Rimosso 'accepted' e 'to_ship'
+        for status in ['waiting_acceptance']:
             bm_orders = self.bm_client.get_orders(status=status)
             for order in bm_orders:
                 order_state = order.get('state', 0)
                 order_id = str(order.get('order_id'))
+                
+                # ✅ FILTRO: Skip se già processato
+                if self.order_tracker.is_processed('backmarket', order_id):
+                    continue
                 
                 if order_id not in seen_order_ids and order_state != 9:
                     orders.append(normalize_order(order, 'backmarket'))
@@ -389,8 +396,13 @@ class OrderService:
         
         for order in rf_orders_all:
             order_state = order.get('state', 'NEW')
-            # ✅ SOLO ordini NEW (non ancora accettati)
-            if order_state == 'NEW':  # ✅ Solo NEW, non PROCESSING o altro
+            order_id = str(order.get('id', ''))
+            
+            # ✅ FILTRO: Skip se già processato
+            if self.order_tracker.is_processed('refurbed', order_id):
+                continue
+            
+            if order_state == 'NEW':
                 orders.append(normalize_order(order, 'refurbed'))
         
         logger.info(f"Refurbed: {len(orders)} ordini NEW in attesa")

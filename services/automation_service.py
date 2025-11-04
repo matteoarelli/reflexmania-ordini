@@ -213,7 +213,13 @@ class AutomationService:
             raise
     
     def _send_telegram_notification(self, results: Dict):
-        """Invia notifica Telegram con riepilogo"""
+        """Invia notifica Telegram con riepilogo (SOLO se ci sono ordini processati)"""
+        
+        # ✅ Skip se nessun ordine processato
+        if results['orders_processed'] == 0:
+            logger.info("ℹ️ [AUTOMATION] Nessun ordine processato, skip notifica Telegram")
+            return
+        
         if not self.telegram_token or not self.telegram_chat_id:
             logger.info("ℹ️ [AUTOMATION] Telegram non configurato, skip notifica")
             return

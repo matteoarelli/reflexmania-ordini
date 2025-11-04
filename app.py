@@ -1941,6 +1941,26 @@ def test_telegram():
             "error": str(e)
         })
 
+@app.route('/api/tracker/status', methods=['GET'])
+def tracker_status():
+    """Mostra contenuto tracker ordini"""
+    try:
+        from utils.order_tracker import OrderTracker
+        tracker = OrderTracker()
+        
+        return jsonify({
+            "success": True,
+            "tracker_file": "/tmp/ordini_processati.json",
+            "stats": tracker.get_stats(),
+            "data": tracker.data,
+            "total_orders": tracker._count_orders(tracker.data)
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500    
+
 # ============================================================
 # STARTUP - AVVIA SCHEDULER AUTOMAZIONE
 # ============================================================

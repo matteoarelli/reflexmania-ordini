@@ -410,11 +410,9 @@ class OrderService:
         return orders
     
     def get_magento_pending_orders(self) -> List[Dict]:
-        """Recupera ordini Magento in processing SENZA DDT già creato"""
         orders = []
         
         try:
-            # Recupera ordini in processing
             mg_orders = self.magento_client.get_processing_orders()
             logger.info(f"Magento: trovati {len(mg_orders)} ordini in processing")
             
@@ -424,12 +422,9 @@ class OrderService:
                 if not order_id:
                     continue
                 
-                # Verifica se esiste già DDT su InvoiceX
-                riferimento = f"MAGENTO-{order_id}"
-                
-                # Qui dovremmo controllare su InvoiceX, ma non abbiamo accesso
-                # al client InvoiceX in OrderService
-                # Soluzione: normalizziamo l'ordine e il controllo lo fa DDTService
+                # ✅ FILTRO TRACKER
+                if self.order_tracker.is_processed('magento', order_id):
+                    continue
                 
                 orders.append(normalize_order(order, 'magento'))
             

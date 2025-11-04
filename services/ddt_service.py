@@ -92,16 +92,6 @@ class DDTService:
             
             self.logger.info(f"Creazione DDT per ordine {order_id} da {marketplace}")
             
-            # ✅ NUOVO: CONTROLLO DDT già esistente
-            if self.api.verifica_ddt_esiste(riferimento):
-                self.logger.warning(f"⚠️ DDT con riferimento '{riferimento}' già esistente, skip creazione")
-                return {
-                    'success': False,
-                    'error': f'DDT già esistente per ordine {order_id}',
-                    'skip': True  # Flag speciale per distinguere da errore vero
-                }
-            # ✅ FINE CONTROLLO
-            
             self.logger.info(f"Ordine ricevuto: email={ordine.get('customer_email')}, items={len(ordine.get('items', []))}")
             
             # 1. Estrai dati cliente

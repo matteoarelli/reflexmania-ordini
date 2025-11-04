@@ -299,9 +299,8 @@ class InvoiceXAPIClient:
         """
         try:
             # Cerca DDT per riferimento
-            response = requests.get(
+            response = self.session.get(
                 f"{self.base_url}/ddt-vendita",
-                headers=self.headers,
                 params={'riferimento': riferimento},
                 timeout=10
             )
@@ -311,18 +310,18 @@ class InvoiceXAPIClient:
                 
                 # Se ritorna array con almeno 1 elemento, il DDT esiste
                 if isinstance(data, list) and len(data) > 0:
-                    logger.info(f"✅ DDT con riferimento '{riferimento}' già esistente")
+                    self.logger.info(f"✅ DDT con riferimento '{riferimento}' già esistente")
                     return True
                 
                 # Se ritorna oggetto singolo, il DDT esiste
                 if isinstance(data, dict) and data.get('id'):
-                    logger.info(f"✅ DDT con riferimento '{riferimento}' già esistente")
+                    self.logger.info(f"✅ DDT con riferimento '{riferimento}' già esistente")
                     return True
             
-            logger.info(f"ℹ️ DDT con riferimento '{riferimento}' non trovato")
+            self.logger.info(f"ℹ️ DDT con riferimento '{riferimento}' non trovato")
             return False
             
         except Exception as e:
-            logger.warning(f"⚠️ Errore verifica DDT esistente: {e}")
+            self.logger.warning(f"⚠️ Errore verifica DDT esistente: {e}")
             # In caso di errore, assumiamo non esista (meglio duplicare che perdere ordine)
-            return False    
+            return False

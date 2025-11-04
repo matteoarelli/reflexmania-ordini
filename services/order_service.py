@@ -364,11 +364,12 @@ class OrderService:
         )
     
     def get_backmarket_pending_orders(self) -> List[Dict]:
-        """Recupera solo ordini BackMarket pendenti"""
+        """Recupera solo ordini BackMarket NON ancora accettati"""
         orders = []
         seen_order_ids = set()
         
-        for status in ['waiting_acceptance', 'accepted', 'to_ship']:
+        # ✅ SOLO waiting_acceptance (non ancora accettati)
+        for status in ['waiting_acceptance']:  # ✅ Rimosso 'accepted' e 'to_ship'
             bm_orders = self.bm_client.get_orders(status=status)
             for order in bm_orders:
                 order_state = order.get('state', 0)
@@ -378,18 +379,21 @@ class OrderService:
                     orders.append(normalize_order(order, 'backmarket'))
                     seen_order_ids.add(order_id)
         
+        logger.info(f"BackMarket: {len(orders)} ordini in attesa di accettazione")
         return orders
     
     def get_refurbed_pending_orders(self) -> List[Dict]:
-        """Recupera solo ordini Refurbed pendenti"""
+        """Recupera solo ordini Refurbed NON ancora processati"""
         rf_orders_all = self.rf_client.get_orders(state=None, limit=100, sort_desc=True)
         orders = []
         
         for order in rf_orders_all:
             order_state = order.get('state', 'NEW')
-            if order_state not in ['SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED', 'REJECTED']:
+            # ✅ SOLO ordini NEW (non ancora accettati)
+            if order_state == 'NEW':  # ✅ Solo NEW, non PROCESSING o altro
                 orders.append(normalize_order(order, 'refurbed'))
         
+        logger.info(f"Refurbed: {len(orders)} ordini NEW in attesa")
         return orders
     
     def get_magento_pending_orders(self) -> List[Dict]:

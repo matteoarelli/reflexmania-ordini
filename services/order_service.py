@@ -4,6 +4,7 @@ Servizio per gestione ordini multi-marketplace
 """
 import logging
 from typing import List, Dict
+from utils.order_tracker import OrderTracker  # ✅ AGGIUNGI QUESTA RIGA
 
 logger = logging.getLogger(__name__)
 

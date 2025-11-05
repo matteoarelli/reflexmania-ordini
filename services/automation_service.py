@@ -90,7 +90,10 @@ class AutomationService:
                                 results['ddts_created'].append({
                                     'order_id': order_id,
                                     'ddt_id': ddt_id,
-                                    'marketplace': channel
+                                    'marketplace': channel,
+                                    'customer_name': order.get('customer_name', 'N/A'),  # ✅ Aggiungi nome cliente
+                                    'items': order.get('items', []),                      # ✅ Aggiungi prodotti
+                                    'total': order.get('total', 0)                        # ✅ Aggiungi totale
                                 })
                                 logger.info(f"📄 [AUTOMATION] DDT {ddt_id} creato per ordine {order_id}")
                                 
@@ -231,13 +234,39 @@ class AutomationService:
             message += f"✅ Ordini accettati: *{len(results['orders_accepted'])}*\n"
             message += f"📄 DDT creati: *{len(results['ddts_created'])}*\n"
             
-            # Dettagli DDT creati
+            # Dettagli ordini e DDT creati
             if results['ddts_created']:
-                message += "\n*DDT creati:*\n"
+                message += "\n*Ordini ricevuti e DDT creati:*\n"
                 for ddt in results['ddts_created'][:5]:  # Max 5
                     marketplace = ddt['marketplace'].upper()
-                    message += f"• {marketplace} {ddt['order_id']}: DDT #{ddt['ddt_id']}\n"
-            
+                    customer = ddt.get('customer_name', 'N/A')
+                    total = float(ddt.get('total', 0))
+                    items = ddt.get('items', [])
+                    
+                    # Header ordine
+                    message += f"\n📦 *{marketplace}* - Ordine #{ddt['order_id']}\n"
+                    message += f"👤 Cliente: {customer}\n"
+                    
+                    # Prodotti
+                    for item in items[:3]:  # Max 3 prodotti per ordine
+                        product_name = item.get('name', 'N/A')
+                        price = float(item.get('price', 0))
+                        qty = int(item.get('quantity', 1))
+                        
+                        # Accorcia nome se troppo lungo
+                        if len(product_name) > 40:
+                            product_name = product_name[:37] + "..."
+                        
+                        message += f"  • {product_name}\n"
+                        message += f"    €{price:.2f} x{qty}\n"
+                    
+                    if len(items) > 3:
+                        message += f"  • ... e altri {len(items)-3} prodotti\n"
+                    
+                    # Totale e DDT
+                    message += f"💰 Totale: €{total:.2f}\n"
+                    message += f"📄 DDT #{ddt['ddt_id']}\n"
+
             # Errori
             if results['errors']:
                 message += f"\n⚠️ Errori: *{len(results['errors'])}*\n"

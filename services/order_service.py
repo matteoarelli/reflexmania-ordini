@@ -192,7 +192,51 @@ def normalize_order(order: Dict, source: str) -> Dict:
             'total': float(order.get('totalPrice', {}).get('sellingPrice', 0)),
             'accepted': False
         }
-    
+    elif source == 'magento':
+        billing = order.get('billing_address', {})
+        shipping = order.get('extension_attributes', {}).get('shipping_assignments', [{}])[0].get('shipping', {}).get('address', {})
+        
+        if not shipping:
+            shipping = billing
+        
+        items = []
+        for item in order.get('items', []):
+            if item.get('product_type') in ['virtual', 'downloadable']:
+                continue
+            if item.get('parent_item_id'):
+                continue
+            
+            items.append({
+                'sku': item.get('sku', ''),
+                'name': item.get('name', 'N/A'),
+                'quantity': int(item.get('qty_ordered', 1)),
+                'price': float(item.get('price', 0))
+            })
+        
+        customer_email = order.get('customer_email', '') or billing.get('email', '')
+        if not customer_email:
+            increment_id = order.get('increment_id', 'unknown')
+            customer_email = f"magento_{increment_id}@placeholder.reflexmania.it"
+        
+        return {
+            'order_id': str(order.get('increment_id', '')),
+            'entity_id': int(order.get('entity_id', 0)),
+            'source': 'Magento',
+            'channel': 'magento',
+            'payment_method': order.get('payment', {}).get('method', 'unknown'),
+            'status': order.get('status', 'processing'),
+            'date': order.get('created_at', ''),
+            'customer_name': f"{billing.get('firstname', '')} {billing.get('lastname', '')}".strip(),
+            'customer_email': customer_email,
+            'customer_phone': billing.get('telephone', ''),
+            'address': ' '.join([s for s in billing.get('street', []) if s]),
+            'city': billing.get('city', ''),
+            'postal_code': billing.get('postcode', ''),
+            'country': billing.get('country_id', ''),
+            'items': items,
+            'total': float(order.get('grand_total', 0)),
+            'accepted': True
+        }
     return {}
 
 

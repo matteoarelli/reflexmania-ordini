@@ -99,11 +99,32 @@ class AutomationService:
                                 
                                 # ✅ Segna come processato
                                 self.order_service.order_tracker.mark_processed(channel, order_id, ddt_id)
-                            else:
-                                logger.info(f"ℹ️ [AUTOMATION] DDT già esistente per ordine {order_id}, skippato")
-                                
-                                # ✅ Segna come processato anche se skippato
-                                self.order_service.order_tracker.mark_processed(channel, order_id, "SKIP")
+
+                                # ✅ DISABILITA PRODOTTI SU TUTTI I MARKETPLACE
+                                logger.info(f"🚫 [AUTOMATION] Disabilitazione prodotti per ordine {order_id}")
+                                for item in order.get('items', []):
+                                    sku = item.get('sku', '')
+                                    listing_id = item.get('listing_id', '')
+                                    
+                                    try:
+                                        from services.order_service import disable_product_on_channels
+                                        disable_product_on_channels(
+                                            sku, 
+                                            listing_id,
+                                            self.order_service.bm_client,
+                                            self.order_service.rf_client,
+                                            self.order_service.oct_client,
+                                            self.order_service.magento_client
+                                        )
+                                        logger.info(f"✅ [AUTOMATION] Prodotto {sku} disabilitato su tutti i canali")
+                                    except Exception as e:
+                                        logger.error(f"❌ [AUTOMATION] Errore disabilitazione prodotto {sku}: {e}")
+
+                                else:
+                                    logger.info(f"ℹ️ [AUTOMATION] DDT già esistente per ordine {order_id}, skippato")
+                                    
+                                    # ✅ Segna come processato anche se skippato
+                                    self.order_service.order_tracker.mark_processed(channel, order_id, "SKIP")
                                 
                         except Exception as e:
                             error_msg = f"DDT fallito per {order_id}: {str(e)}"

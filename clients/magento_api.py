@@ -92,18 +92,19 @@ class MagentoAPIClient:
         return []
 
     def update_order_to_processing(self, entity_id: int) -> bool:
-        """Aggiorna un ordine da 'pending' a 'processing'"""
-        endpoint = f"/rest/V1/orders/{entity_id}"
+        """Aggiorna un ordine da 'pending' a 'processing' tramite commento stato"""
+        endpoint = f"/rest/V1/orders/{entity_id}/comments"
         
         payload = {
-            "entity": {
-                "entity_id": entity_id,
-                "state": "processing",
+            "statusHistory": {
+                "comment": "Pagamento confermato - ordine in lavorazione",
+                "is_customer_notified": 0,
+                "is_visible_on_front": 0,
                 "status": "processing"
             }
         }
         
-        result = self._make_request('PUT', endpoint, json=payload)
+        result = self._make_request('POST', endpoint, json=payload)
         
         if result:
             logger.info(f"✅ Ordine #{entity_id} aggiornato a 'processing'")

@@ -745,34 +745,6 @@ def dashboard():
                         </table>
                     </div>
                 </div>
-                <!-- Ordini in attesa pagamento -->
-                    <div class="pending-section" id="pending-section" style="display: none;">
-                        <div class="section-header">
-                            <h2>⏳ Ordini in Attesa Pagamento</h2>
-                            <div class="actions">
-                                <button class="btn btn-primary" onclick="refreshPendingOrders()">🔄 Aggiorna</button>
-                            </div>
-                        </div>
-                        
-                        <div style="overflow-x: auto;">
-                            <table id="pending-table">
-                                <thead>
-                                    <tr>
-                                        <th>Ordine</th>
-                                        <th>Cliente</th>
-                                        <th>Prodotto</th>
-                                        <th>Importo</th>
-                                        <th>Pagamento</th>
-                                        <th>In Attesa Da</th>
-                                        <th>Azioni</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="pending-body">
-                                    <tr><td colspan="7" style="text-align: center;">Caricamento...</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
                 <div class="anastasia-widget">
                     <div class="widget-header">
                         <span class="widget-icon">🎫</span>
@@ -805,6 +777,34 @@ def dashboard():
                         Apri Anastasia →
                     </a>
                 </div>
+                <!-- Ordini in attesa pagamento -->
+                    <div class="pending-section" id="pending-section" style="display: none;">
+                        <div class="section-header">
+                            <h2>⏳ Ordini in Attesa Pagamento</h2>
+                            <div class="actions">
+                                <button class="btn btn-primary" onclick="refreshPendingOrders()">🔄 Aggiorna</button>
+                            </div>
+                        </div>
+                        
+                        <div style="overflow-x: auto;">
+                            <table id="pending-table">
+                                <thead>
+                                    <tr>
+                                        <th>Ordine</th>
+                                        <th>Cliente</th>
+                                        <th>Prodotto</th>
+                                        <th>Importo</th>
+                                        <th>Pagamento</th>
+                                        <th>In Attesa Da</th>
+                                        <th>Azioni</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pending-body">
+                                    <tr><td colspan="7" style="text-align: center;">Caricamento...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
             </div>
         </div>
     <script>

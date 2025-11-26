@@ -92,26 +92,57 @@ class MagentoAPIClient:
         return []
 
     def update_order_to_processing(self, entity_id: int) -> bool:
-        """Aggiorna un ordine da 'pending' a 'processing' tramite commento stato"""
-        endpoint = f"/rest/V1/orders/{entity_id}/comments"
-        
-        payload = {
-            "statusHistory": {
-                "comment": "Pagamento confermato - ordine in lavorazione",
-                "is_customer_notified": 0,
-                "is_visible_on_front": 0,
-                "status": "processing"
+        """
+        Aggiorna un ordine da 'pending' a 'processing' creando una invoice.
+        """
+        try:
+            # Prima recupera i dettagli dell'ordine per avere gli items
+            order = self.get_order_details(entity_id)
+            if not order:
+                logger.error(f"❌ Impossibile recuperare ordine #{entity_id}")
+                return False
+            
+            # Prepara gli items per l'invoice
+            invoice_items = []
+            for item in order.get('items', []):
+                # Salta item virtuali e child di bundle
+                if item.get('product_type') in ['virtual', 'downloadable']:
+                    continue
+                if item.get('parent_item_id'):
+                    continue
+                
+                invoice_items.append({
+                    "order_item_id": item['item_id'],
+                    "qty": item.get('qty_ordered', 1)
+                })
+            
+            if not invoice_items:
+                logger.error(f"❌ Nessun item da fatturare per ordine #{entity_id}")
+                return False
+            
+            # Crea invoice
+            endpoint = f"/rest/V1/order/{entity_id}/invoice"
+            
+            payload = {
+                "capture": True,
+                "notify": False,
+                "items": invoice_items
             }
-        }
-        
-        result = self._make_request('POST', endpoint, json=payload)
-        
-        if result:
-            logger.info(f"✅ Ordine #{entity_id} aggiornato a 'processing'")
-            return True
-        
-        logger.error(f"❌ Errore aggiornamento ordine #{entity_id} a processing")
-        return False
+            
+            logger.info(f"📄 Creazione invoice per ordine #{entity_id} con {len(invoice_items)} items")
+            
+            result = self._make_request('POST', endpoint, json=payload)
+            
+            if result:
+                logger.info(f"✅ Invoice creata per ordine #{entity_id} - stato ora 'processing'")
+                return True
+            
+            logger.error(f"❌ Errore creazione invoice per ordine #{entity_id}")
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Errore update_order_to_processing: {e}")
+            return False
     
     def get_order_details(self, entity_id: int) -> Optional[Dict]:
         """Recupera i dettagli completi di un ordine specifico"""

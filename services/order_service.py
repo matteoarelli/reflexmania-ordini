@@ -5,6 +5,34 @@ Servizio per gestione ordini multi-marketplace
 import logging
 from typing import List, Dict
 from utils.order_tracker import OrderTracker  # ✅ AGGIUNGI QUESTA RIGA
+from datetime import datetime, timezone
+
+def calculate_waiting_time(created_at: str) -> dict:
+    """Calcola da quanto tempo un ordine è in attesa"""
+    try:
+        if not created_at:
+            return {'days': 0, 'hours': 0, 'label': 'N/A'}
+        
+        created = datetime.fromisoformat(created_at.replace(' ', 'T'))
+        now = datetime.now()
+        
+        if created.tzinfo is not None:
+            now = datetime.now(timezone.utc)
+        
+        delta = now - created
+        days = delta.days
+        hours = delta.seconds // 3600
+        
+        if days > 0:
+            label = f"{days}g {hours}h"
+        elif hours > 0:
+            label = f"{hours}h"
+        else:
+            label = f"{delta.seconds // 60}m"
+        
+        return {'days': days, 'hours': hours, 'total_hours': days * 24 + hours, 'label': label}
+    except Exception as e:
+        return {'days': 0, 'hours': 0, 'label': 'N/A'}
 
 logger = logging.getLogger(__name__)
 
@@ -494,3 +522,44 @@ class OrderService:
             oct_client=self.oct_client,
             magento_client=self.magento_client
         )
+    
+    def get_magento_waiting_payment_orders(self) -> List[Dict]:
+        """Recupera ordini Magento in stato 'pending' (in attesa pagamento)"""
+        orders = []
+        
+        try:
+            mg_orders = self.magento_client.get_pending_orders()
+            logger.info(f"Magento: trovati {len(mg_orders)} ordini in pending")
+            
+            for order in mg_orders:
+                order_id = order.get('increment_id', '')
+                if not order_id:
+                    continue
+                
+                normalized = normalize_order(order, 'magento')
+                normalized['magento_status'] = 'pending'
+                normalized['waiting_since'] = order.get('created_at', '')
+                orders.append(normalized)
+            
+        except Exception as e:
+            logger.error(f"Errore recupero ordini Magento pending: {e}")
+        
+        return orders
+
+    def confirm_magento_pending_order(self, entity_id: int) -> Dict:
+        """Conferma un ordine Magento pending (pagamento ricevuto)"""
+        try:
+            success = self.magento_client.update_order_to_processing(entity_id)
+            
+            if not success:
+                return {'success': False, 'error': f'Impossibile aggiornare ordine #{entity_id}'}
+            
+            order = self.magento_client.get_order_details(entity_id)
+            if not order:
+                return {'success': False, 'error': f'Impossibile recuperare dettagli ordine'}
+            
+            normalized = normalize_order(order, 'magento')
+            return {'success': True, 'order': normalized, 'message': f'Ordine confermato'}
+            
+        except Exception as e:
+            return {'success': False, 'error': str(e)}

@@ -72,6 +72,46 @@ class MagentoAPIClient:
         logger.warning("Nessun ordine Magento trovato")
         return []
     
+    def get_pending_orders(self) -> List[Dict]:
+        """Recupera tutti gli ordini in stato 'pending' (in attesa di pagamento)"""
+        endpoint = "/rest/V1/orders"
+        
+        params = {
+            'searchCriteria[filter_groups][0][filters][0][field]': 'status',
+            'searchCriteria[filter_groups][0][filters][0][value]': 'pending',
+            'searchCriteria[filter_groups][0][filters][0][condition_type]': 'eq'
+        }
+        
+        result = self._make_request('GET', endpoint, params=params)
+        
+        if result and 'items' in result:
+            logger.info(f"Recuperati {len(result['items'])} ordini Magento in pending")
+            return result['items']
+        
+        logger.warning("Nessun ordine Magento pending trovato")
+        return []
+
+    def update_order_to_processing(self, entity_id: int) -> bool:
+        """Aggiorna un ordine da 'pending' a 'processing'"""
+        endpoint = f"/rest/V1/orders/{entity_id}"
+        
+        payload = {
+            "entity": {
+                "entity_id": entity_id,
+                "state": "processing",
+                "status": "processing"
+            }
+        }
+        
+        result = self._make_request('PUT', endpoint, json=payload)
+        
+        if result:
+            logger.info(f"✅ Ordine #{entity_id} aggiornato a 'processing'")
+            return True
+        
+        logger.error(f"❌ Errore aggiornamento ordine #{entity_id} a processing")
+        return False
+    
     def get_order_details(self, entity_id: int) -> Optional[Dict]:
         """Recupera i dettagli completi di un ordine specifico"""
         endpoint = f"/rest/V1/orders/{entity_id}"

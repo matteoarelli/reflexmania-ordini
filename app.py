@@ -162,6 +162,48 @@ def _get_order_recommendation(items_info: list, can_accept_any: bool) -> str:
     
     return "⚠️ Verifica manualmente lo stato degli items"
 
+def get_payment_label(payment_method: str) -> str:
+    """Converte codice metodo pagamento in label leggibile"""
+    labels = {
+        'banktransfer': '🏦 Bonifico',
+        'checkmo': '📝 Manuale',
+        'purchaseorder': '📋 Ordine Acquisto',
+        'cashondelivery': '💵 Contrassegno',
+        'free': '🎁 Gratuito',
+        'paypal_express': '💳 PayPal',
+        'paypal': '💳 PayPal',
+        'stripe_payments': '💳 Stripe',
+    }
+    return labels.get(payment_method, f'💰 {payment_method}')
+
+
+def send_telegram_order_confirmed(order: dict, ddt_number: str):
+    """Notifica Telegram quando ordine pending viene confermato"""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    
+    if not token or not chat_id:
+        return
+    
+    try:
+        message = (
+            f"✅ *Ordine confermato!*\n\n"
+            f"🔢 Ordine: `{order.get('order_id', 'N/A')}`\n"
+            f"👤 Cliente: {order.get('customer_name', 'N/A')}\n"
+            f"💰 Totale: €{order.get('total', 0):.2f}\n"
+            f"📄 DDT: `{ddt_number}`\n\n"
+            f"_Prodotti disabilitati su tutti i canali_"
+        )
+        
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        requests.post(url, json={
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown"
+        }, timeout=10)
+    except Exception as e:
+        logger.error(f"Errore notifica Telegram: {e}")
+
 
 # ============================================================================
 # API ANASTASIA TICKETS
@@ -598,6 +640,35 @@ def dashboard():
                 color: #856404;
                 font-size: 13px;
             }
+            .pending-section {
+                background: rgba(255,255,255,0.95);
+                backdrop-filter: blur(10px);
+                border-radius: 16px;
+                padding: 25px;
+                box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+                border-left: 4px solid #ffc107;
+                margin-top: 30px;
+            }
+            
+            .pending-section h2 { color: #856404; }
+            
+            .badge-bonifico { background: #e3f2fd; color: #1565c0; }
+            .badge-manuale { background: #fff3e0; color: #e65100; }
+            
+            .waiting-time {
+                font-size: 12px;
+                padding: 4px 8px;
+                border-radius: 4px;
+                background: #fff3cd;
+                color: #856404;
+            }
+            
+            .waiting-time.warning { background: #f8d7da; color: #721c24; }
+            
+            .btn-confirm {
+                background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+                color: white;
+            }
         </style>
     </head>
     <body>
@@ -674,7 +745,34 @@ def dashboard():
                         </table>
                     </div>
                 </div>
-                
+                <!-- Ordini in attesa pagamento -->
+                    <div class="pending-section" id="pending-section" style="display: none;">
+                        <div class="section-header">
+                            <h2>⏳ Ordini in Attesa Pagamento</h2>
+                            <div class="actions">
+                                <button class="btn btn-primary" onclick="refreshPendingOrders()">🔄 Aggiorna</button>
+                            </div>
+                        </div>
+                        
+                        <div style="overflow-x: auto;">
+                            <table id="pending-table">
+                                <thead>
+                                    <tr>
+                                        <th>Ordine</th>
+                                        <th>Cliente</th>
+                                        <th>Prodotto</th>
+                                        <th>Importo</th>
+                                        <th>Pagamento</th>
+                                        <th>In Attesa Da</th>
+                                        <th>Azioni</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pending-body">
+                                    <tr><td colspan="7" style="text-align: center;">Caricamento...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 <div class="anastasia-widget">
                     <div class="widget-header">
                         <span class="widget-icon">🎫</span>
@@ -720,6 +818,7 @@ def dashboard():
                         orders = data.orders;
                         updateStats();
                         renderOrders();
+                        refreshPendingOrders();
                         document.getElementById('loading').style.display = 'none';
                     })
                     .catch(err => {
@@ -1126,6 +1225,79 @@ def dashboard():
             
             setInterval(refreshOrders, 120000);
             setInterval(refreshTickets, 30000);
+        let pendingOrders = [];
+            
+            function refreshPendingOrders() {
+                fetch('/api/orders/pending_magento')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            pendingOrders = data.orders;
+                            renderPendingOrders();
+                            document.getElementById('pending-section').style.display = 
+                                pendingOrders.length > 0 ? 'block' : 'none';
+                        }
+                    })
+                    .catch(err => console.error('Errore pending:', err));
+            }
+            
+            function renderPendingOrders() {
+                const tbody = document.getElementById('pending-body');
+                
+                if (pendingOrders.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">✅ Nessun ordine in attesa</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = pendingOrders.map(order => {
+                    let productInfo = order.items?.[0]?.name || 'N/A';
+                    if (order.items?.length > 1) productInfo += ` (+${order.items.length - 1})`;
+                    
+                    const pm = order.payment_method || '';
+                    let paymentBadge = pm.includes('banktransfer') 
+                        ? '<span class="badge badge-bonifico">🏦 Bonifico</span>'
+                        : `<span class="badge badge-pending">${order.payment_label || pm}</span>`;
+                    
+                    const waiting = order.waiting_time || {};
+                    const waitingClass = waiting.days >= 3 ? 'warning' : '';
+                    
+                    return `<tr>
+                        <td><strong>${order.order_id}</strong></td>
+                        <td>${order.customer_name}</td>
+                        <td>${productInfo}</td>
+                        <td><strong>€${order.total.toFixed(2)}</strong></td>
+                        <td>${paymentBadge}</td>
+                        <td><span class="waiting-time ${waitingClass}">${waiting.label || 'N/A'}</span></td>
+                        <td><button class="btn btn-confirm btn-small" onclick="confirmPendingOrder(${order.entity_id}, '${order.order_id}')">✅ Conferma</button></td>
+                    </tr>`;
+                }).join('');
+            }
+            
+            function confirmPendingOrder(entityId, orderId) {
+                if (!confirm(`Confermi il pagamento per ordine ${orderId}?\\n\\nQuesto creerà il DDT e disabiliterà i prodotti.`)) return;
+                
+                document.getElementById('loading').style.display = 'block';
+                
+                fetch(`/api/pending_magento/confirm/${entityId}`, { method: 'POST' })
+                    .then(r => r.json())
+                    .then(data => {
+                        document.getElementById('loading').style.display = 'none';
+                        if (data.success) {
+                            alert(`✅ Ordine ${orderId} confermato!\\nDDT: ${data.ddt_number}`);
+                            refreshPendingOrders();
+                            refreshOrders();
+                        } else {
+                            alert('❌ Errore: ' + data.error);
+                        }
+                    })
+                    .catch(err => {
+                        document.getElementById('loading').style.display = 'none';
+                        alert('❌ Errore: ' + err.message);
+                    });
+            }
+            
+            // Carica pending all'avvio
+            refreshPendingOrders();    
         </script>
     </body>
     </html>
@@ -1146,7 +1318,72 @@ def api_orders():
         logger.error(f"Errore API orders: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/orders/pending_magento')
+def api_pending_magento_orders():
+    """API: Ordini Magento in attesa di pagamento"""
+    try:
+        orders = order_service.get_magento_waiting_payment_orders()
+        
+        from services.order_service import calculate_waiting_time
+        for order in orders:
+            waiting = calculate_waiting_time(order.get('waiting_since', ''))
+            order['waiting_time'] = waiting
+            order['payment_label'] = get_payment_label(order.get('payment_method', ''))
+        
+        return jsonify({
+            'success': True,
+            'count': len(orders),
+            'orders': orders
+        })
+    except Exception as e:
+        logger.error(f"Errore API pending magento: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
+
+@app.route('/api/pending_magento/confirm/<int:entity_id>', methods=['POST'])
+def confirm_pending_magento(entity_id):
+    """Conferma ordine pending e avvia flusso DDT"""
+    try:
+        logger.info(f"🔄 Conferma ordine pending entity_id={entity_id}")
+        
+        result = order_service.confirm_magento_pending_order(entity_id)
+        if not result['success']:
+            return jsonify(result), 400
+        
+        order = result['order']
+        order_id = order['order_id']
+        
+        # Crea DDT
+        ddt_result = ddt_service.create_ddt_from_order(order)
+        if not ddt_result.get('success'):
+            return jsonify({
+                'success': False,
+                'error': f"Ordine confermato ma errore DDT: {ddt_result.get('error')}",
+                'order_confirmed': True
+            }), 500
+        
+        ddt_number = ddt_result.get('ddt_number', 'N/A')
+        
+        # Disabilita prodotti
+        for item in order.get('items', []):
+            sku = item.get('sku', '')
+            if sku:
+                order_service.disable_product_all_channels(sku)
+        
+        # Notifica Telegram
+        send_telegram_order_confirmed(order, ddt_number)
+        
+        return jsonify({
+            'success': True,
+            'order_id': order_id,
+            'ddt_number': ddt_number,
+            'message': f'Ordine #{order_id} confermato, DDT {ddt_number} creato'
+        })
+        
+    except Exception as e:
+        logger.error(f"Errore conferma pending: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    
 @app.route('/api/mark_shipped', methods=['POST'])
 def api_mark_shipped():
     """API: marca ordine come spedito e comunica tracking al marketplace"""

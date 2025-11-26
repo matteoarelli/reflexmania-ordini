@@ -1354,7 +1354,7 @@ def confirm_pending_magento(entity_id):
         order_id = order['order_id']
         
         # Crea DDT
-        ddt_result = ddt_service.create_ddt_from_order(order)
+        ddt_result = ddt_service.crea_ddt_da_ordine_marketplace(order, 'magento')
         if not ddt_result.get('success'):
             return jsonify({
                 'success': False,
@@ -1362,7 +1362,7 @@ def confirm_pending_magento(entity_id):
                 'order_confirmed': True
             }), 500
         
-        ddt_number = ddt_result.get('ddt_number', 'N/A')
+        ddt_number = ddt_result.get('ddt_id', 'N/A')
         
         # Disabilita prodotti
         for item in order.get('items', []):

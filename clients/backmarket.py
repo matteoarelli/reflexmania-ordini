@@ -19,40 +19,29 @@ class BackMarketClient:
             'Accept': 'application/json'
         }
     
-    def get_orders(self, status: str = None, limit: int = 100, days_back: int = None) -> List[Dict]:
+    def get_orders(self, status: str = None, limit: int = 500) -> List[Dict]:
         """
         Recupera ordini BackMarket
         
         Args:
             status: Filtra per stato (es. 'new', 'to_ship')
-            limit: Numero massimo di ordini da recuperare
-            days_back: Quanti giorni indietro cercare (default da env BACKMARKET_DAYS_BACK o 30)
+            limit: Numero massimo di ordini da recuperare (default 500 per includere ordini più vecchi)
         """
         try:
-            import os
-            from datetime import datetime, timedelta
-            
-            # Default: 30 giorni, configurabile via env
-            if days_back is None:
-                days_back = int(os.getenv('BACKMARKET_DAYS_BACK', '30'))
-            
             url = f"{self.base_url}/ws/orders"
             params = {'limit': limit}
             
             if status:
                 params['status'] = status
             
-            # Aggiungi date_modification per recuperare ordini più vecchi
-            # Formato: ISO 8601 (2025-11-27T10:30:00)
-            date_from = datetime.now() - timedelta(days=days_back)
-            params['date_modification'] = date_from.strftime('%Y-%m-%dT%H:%M:%S')
-            
-            logger.info(f"[BACKMARKET] Recupero ordini da {date_from.strftime('%Y-%m-%d')} (ultimi {days_back} giorni)")
+            logger.info(f"[BACKMARKET] Recupero ordini (status={status}, limit={limit})")
             
             response = requests.get(url, headers=self.headers, params=params)
             response.raise_for_status()
             data = response.json()
-            return data.get('results', [])
+            orders = data.get('results', [])
+            logger.info(f"[BACKMARKET] Recuperati {len(orders)} ordini")
+            return orders
         except Exception as e:
             logger.error(f"Errore BackMarket get_orders: {e}")
             return []

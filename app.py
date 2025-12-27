@@ -1014,7 +1014,8 @@ def dashboard():
                 let carrier = 'BRT';
                 let trackingUrl = '';
                 
-                if (source === 'Refurbed') {
+                // Chiedi corriere sia per Refurbed che per BackMarket
+                if (source === 'Refurbed' || source === 'BackMarket') {
                     carrier = prompt(
                         `Seleziona il corriere per ${orderId}:\\n\\n` +
                         `Digita uno tra:\\n` +
@@ -1044,7 +1045,8 @@ def dashboard():
                     trackingUrl = prompt(`Inserisci l'URL di tracking (opzionale):`) || '';
                 }
                 
-                const confirmMsg = source === 'Refurbed' 
+                // Messaggio conferma con corriere per Refurbed e BackMarket
+                const confirmMsg = (source === 'Refurbed' || source === 'BackMarket')
                     ? `Confermi la spedizione dell'ordine ${orderId}?\\n\\nTracking: ${trackingNumber}\\nCorriere: ${carrier}`
                     : `Confermi la spedizione dell'ordine ${orderId}?\\n\\nTracking: ${trackingNumber}`;
                 
@@ -1060,7 +1062,8 @@ def dashboard():
                     tracking_number: trackingNumber
                 };
                 
-                if (source === 'Refurbed') {
+                // Aggiungi carrier per Refurbed e BackMarket
+                if (source === 'Refurbed' || source === 'BackMarket') {
                     requestBody.carrier = carrier;
                 } else if (trackingUrl) {
                     requestBody.tracking_url = trackingUrl;
@@ -1406,16 +1409,24 @@ def api_mark_shipped():
         
         # BackMarket
         if source == 'BackMarket':
-            final_tracking = tracking_url if tracking_url else tracking_number
+            carrier = data.get('carrier', 'BRT').upper()
             
-            if not bm_client.mark_as_shipped(order_id, tracking_number, final_tracking):
+            # Genera URL tracking automaticamente dal carrier
+            if not tracking_url:
+                tracking_url = generate_tracking_url(carrier, tracking_number)
+                logger.info(f"🔗 URL tracking BackMarket generato: {tracking_url}")
+            
+            # Passa carrier alla funzione mark_as_shipped
+            if not bm_client.mark_as_shipped(order_id, tracking_number, tracking_url, carrier):
                 return jsonify({'success': False, 'error': 'Errore comunicazione tracking'}), 500
             
             return jsonify({
                 'success': True,
                 'order_id': order_id,
                 'tracking_number': tracking_number,
-                'message': 'Ordine marcato come spedito su BackMarket'
+                'tracking_url': tracking_url,
+                'carrier': carrier,
+                'message': f'Ordine marcato come spedito su BackMarket (corriere: {carrier})'
             })
         
         # Refurbed

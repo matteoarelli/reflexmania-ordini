@@ -19,12 +19,36 @@ class BackMarketClient:
             'Accept': 'application/json'
         }
     
-    def get_orders(self, status: str = None, limit: int = 100) -> List[Dict]:
+    def get_orders(self, status: str = None, limit: int = 100, days_back: int = None) -> List[Dict]:
+        """
+        Recupera ordini BackMarket
+        
+        Args:
+            status: Filtra per stato (es. 'new', 'to_ship')
+            limit: Numero massimo di ordini da recuperare
+            days_back: Quanti giorni indietro cercare (default da env BACKMARKET_DAYS_BACK o 30)
+        """
         try:
+            import os
+            from datetime import datetime, timedelta
+            
+            # Default: 30 giorni, configurabile via env
+            if days_back is None:
+                days_back = int(os.getenv('BACKMARKET_DAYS_BACK', '30'))
+            
             url = f"{self.base_url}/ws/orders"
             params = {'limit': limit}
+            
             if status:
                 params['status'] = status
+            
+            # Aggiungi date_creation per recuperare ordini più vecchi
+            # Formato: timestamp UNIX
+            date_from = datetime.now() - timedelta(days=days_back)
+            params['date_creation'] = int(date_from.timestamp())
+            
+            logger.info(f"[BACKMARKET] Recupero ordini da {date_from.strftime('%Y-%m-%d')} (ultimi {days_back} giorni)")
+            
             response = requests.get(url, headers=self.headers, params=params)
             response.raise_for_status()
             data = response.json()
@@ -172,8 +196,16 @@ class BackMarketClient:
             logger.exception(e)
             return False
     
-    def mark_as_shipped(self, order_id: str, tracking_number: str, tracking_url: str = '') -> bool:
-        """Marca un ordine come spedito"""
+    def mark_as_shipped(self, order_id: str, tracking_number: str, tracking_url: str = '', carrier: str = 'BRT') -> bool:
+        """
+        Marca un ordine come spedito
+        
+        Args:
+            order_id: ID ordine BackMarket
+            tracking_number: Numero di tracking
+            tracking_url: URL di tracking (opzionale)
+            carrier: Corriere utilizzato (UPS, DHL, BRT, GLS, TNT, FEDEX, POSTE, SDA)
+        """
         try:
             order_url = f"{self.base_url}/ws/orders/{order_id}"
             order_response = requests.get(order_url, headers=self.headers)
@@ -195,13 +227,16 @@ class BackMarketClient:
                 "new_state": 3,
                 "sku": sku,
                 "tracking_number": tracking_number,
-                "tracking_url": tracking_url
+                "tracking_url": tracking_url,
+                "shipper": carrier.upper()  # Aggiungi corriere
             }
+            
+            logger.info(f"[BACKMARKET-SHIP] Ordine {order_id} - Tracking: {tracking_number}, Corriere: {carrier}")
             
             response = requests.post(update_url, headers=self.headers, json=update_data)
             
             if response.status_code == 200:
-                logger.info(f"Ordine {order_id} marcato come spedito su BackMarket")
+                logger.info(f"✅ Ordine {order_id} marcato come spedito su BackMarket (corriere: {carrier})")
                 return True
             else:
                 logger.error(f"Errore BackMarket mark shipped: {response.status_code} - {response.text}")

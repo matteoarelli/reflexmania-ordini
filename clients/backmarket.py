@@ -43,9 +43,9 @@ class BackMarketClient:
                 params['status'] = status
             
             # Aggiungi date_creation per recuperare ordini più vecchi
-            # Formato: timestamp UNIX
+            # Formato BackMarket: Y-m-d+H:i:s (es. 2025-11-27+10:30:00)
             date_from = datetime.now() - timedelta(days=days_back)
-            params['date_creation'] = int(date_from.timestamp())
+            params['date_creation'] = date_from.strftime('%Y-%m-%d+%H:%M:%S')
             
             logger.info(f"[BACKMARKET] Recupero ordini da {date_from.strftime('%Y-%m-%d')} (ultimi {days_back} giorni)")
             
